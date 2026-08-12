@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <rect width="100" height="100" rx="22" fill="#090d16" />
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#090d16" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="mountainLineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="50%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="backMountainGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#64748b" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#334155" stop-opacity="0.2" />
+    </linearGradient>
+  </defs>
+
+  <rect width="100" height="100" rx="22" fill="url(#bgGlow)" />
+
+  <!-- Background Mountain Silhouette -->
+  <path d="M 5 80 L 25 50 L 40 65 L 60 40 L 78 60 L 95 80 Z" fill="url(#backMountainGrad)" stroke="#475569" stroke-width="1.5" stroke-linejoin="round" />
+
+  <!-- Single Continuous Contour Mountain Line (Front Peak) -->
+  <path d="M 0 82 Q 12 82 18 70 L 35 38 L 48 56 L 68 22 L 84 52 L 100 82" stroke="url(#mountainLineGrad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+
+  <!-- Peak Accent Contours -->
+  <path d="M 68 22 L 68 45 M 35 38 L 38 52" stroke="#6ee7b7" stroke-width="2" stroke-linecap="round" opacity="0.85" />
+
+  <!-- Summit Pulse Beacon -->
+  <circle cx="68" cy="14" r="3.5" fill="#34d399" />
+</svg>

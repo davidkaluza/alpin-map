@@ -1,0 +1,56 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* Leaflet map custom styling for clean outdoor aesthetic */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  font-family: inherit;
+  background-color: #f8fafc;
+}
+
+/* Fix leaflet popup z-index */
+.leaflet-popup-content-wrapper {
+  border-radius: 0.75rem;
+  padding: 4px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+.leaflet-popup-content {
+  margin: 8px 12px;
+  font-family: inherit;
+}
+
+/* Leaflet divIcon resets for exact sub-pixel positioning */
+.leaflet-div-icon {
+  background: transparent !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.alpine-poi-marker, .custom-leaflet-marker, .nav-user-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Custom scrollbar for sidebar lists */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
