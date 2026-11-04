@@ -1,19 +1,13 @@
 export interface Coordinate {
   lat: number;
   lng: number;
-  ele?: number; // Elevation in meters
+  /** Elevation in meters */
+  ele?: number;
+  /** ISO timestamp */
   time?: string;
-  speed?: number; // km/h
 }
 
-export type WaypointCategory = 
-  | 'peak'       // Gipfel
-  | 'hut'        // Schutzhütte / Bergrestaurant
-  | 'water'      // Trinkwasser / Quelle
-  | 'viewpoint'  // Aussichtspunkt
-  | 'parking'    // Parkplatz / Start
-  | 'danger'     // Gefahrenstelle / Klettersteig
-  | 'info';      // Wegweiser / Info
+export type WaypointCategory = 'peak' | 'hut' | 'water' | 'viewpoint' | 'parking' | 'danger' | 'info';
 
 export interface Waypoint {
   id: string;
@@ -23,7 +17,6 @@ export interface Waypoint {
   lng: number;
   ele?: number;
   description?: string;
-  photoUrl?: string;
 }
 
 export type DifficultyLevel = 'Einfach' | 'Mittel' | 'Schwer' | 'Alpin';
@@ -56,37 +49,49 @@ export interface MapLayerConfig {
   minZoom: number;
   maxNativeZoom?: number;
   description: string;
+  /** Tailwind gradient classes for the layer preview tile */
+  preview?: string;
+  dark?: boolean;
+  requiresToken?: boolean;
 }
 
 export interface OfflineRegion {
   id: string;
   name: string;
+  layerId: string;
+  layerName: string;
+  urlTemplate: string;
+  subdomains: string[];
   centerLat: number;
   centerLng: number;
   radiusKm: number;
   minZoom: number;
   maxZoom: number;
   tileCount: number;
+  failedCount: number;
   sizeMb: number;
   downloadedAt: string;
-  status: 'pending' | 'downloading' | 'completed' | 'error';
-  progress: number; // 0 to 100
+  status: 'downloading' | 'completed' | 'partial';
 }
 
+export type NavMode = 'idle' | 'gps' | 'simulation';
+
 export interface NavigationStatus {
-  isNavigating: boolean;
-  isSimulating: boolean;
-  isRecording: boolean;
+  mode: NavMode;
   isPaused: boolean;
+  isRecording: boolean;
+  /** index of the nearest point on the active tour */
   currentIndex: number;
   currentPosition: Coordinate | null;
-  heading: number; // degrees 0-360
+  accuracyM: number | null;
+  heading: number;
   speedKmh: number;
   elapsedSeconds: number;
   distanceCoveredKm: number;
   distanceRemainingKm: number;
   ascentCoveredM: number;
   ascentRemainingM: number;
+  offRouteM: number | null;
   currentInstruction: string;
   recordedTrack: Coordinate[];
 }
@@ -97,14 +102,15 @@ export interface AlpinePOI {
   id: string;
   name: string;
   type: POIType;
-  categoryLabel: string; // 'Schutzhütte' | 'Berggipfel' | 'Refugio'
+  categoryLabel: string;
   lat: number;
   lng: number;
-  ele: number; // Elevation in meters
+  ele: number;
   region: string;
   description: string;
   openingSeason?: string;
   capacity?: string;
   facilities?: string[];
   googleMapsUrl?: string;
+  website?: string;
 }

@@ -1,391 +1,282 @@
-import { OfflineRegion } from '../types';
+import type { MapLayerConfig, OfflineRegion } from '../types';
+import { lat2tile, lng2tile } from '../lib/geo';
 
-const DB_NAME = 'TrailNavOfflineMapDB';
+/**
+ * IndexedDB tile cache.
+ * Tiles are stored under a subdomain-independent key so a/b/c variants share one entry.
+ */
+const DB_NAME = 'AlpinMapOfflineDB';
 const DB_VERSION = 1;
-const TILE_STORE = 'map_tiles';
-const REGION_STORE = 'offline_regions';
+const TILE_STORE = 'tiles';
+const REGION_STORE = 'regions';
+
+let dbPromise: Promise<IDBDatabase> | null = null;
 
 function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(TILE_STORE)) {
-        db.createObjectStore(TILE_STORE, { keyPath: 'url' });
-      }
-      if (!db.objectStoreNames.contains(REGION_STORE)) {
-        db.createObjectStore(REGION_STORE, { keyPath: 'id' });
-      }
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(TILE_STORE)) db.createObjectStore(TILE_STORE, { keyPath: 'key' });
+      if (!db.objectStoreNames.contains(REGION_STORE)) db.createObjectStore(REGION_STORE, { keyPath: 'id' });
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => {
+      dbPromise = null;
+      reject(req.error);
+    };
+  });
+  return dbPromise;
+}
+
+function done(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
   });
 }
 
-export function normalizeTileUrl(url: string): string {
-  // Normalize subdomain variants e.g. //a.tile or //b.tile or //c.tile -> //a.tile
-  return url.replace(/\/\/([a-d])\./i, '//a.');
+/** Removes subdomain and access tokens so the key is stable. */
+export function tileKey(url: string): string {
+  return url
+    .replace(/\/\/[a-d]\./i, '//')
+    .replace(/[?&]access_token=[^&]+/, '');
 }
 
-/**
- * Save tile blob into IndexedDB under exact URL and all subdomain variations (a, b, c, d)
- */
-export async function saveTileToCache(url: string, blob: Blob): Promise<void> {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(TILE_STORE, 'readwrite');
-    const store = tx.objectStore(TILE_STORE);
-    
-    // Save under original URL
-    store.put({ url, blob, timestamp: Date.now() });
-
-    // Save under all subdomain variations (a, b, c, d) so Leaflet tile layer matches instantly
-    const match = url.match(/\/\/([a-d])\./i);
-    if (match) {
-      const currentSub = match[1].toLowerCase();
-      ['a', 'b', 'c', 'd'].forEach((sub) => {
-        if (sub !== currentSub) {
-          const subUrl = url.replace(`//${match[1]}.`, `//${sub}.`);
-          store.put({ url: subUrl, blob, timestamp: Date.now() });
-        }
-      });
-    }
-
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (e) {
-    console.warn('Failed to cache tile:', e);
-  }
-}
-
-/**
- * Retrieve tile blob from IndexedDB cache with fast subdomain fallback
- */
 export async function getTileFromCache(url: string): Promise<Blob | null> {
   try {
     const db = await openDB();
-    const tx = db.transaction(TILE_STORE, 'readonly');
-    const store = tx.objectStore(TILE_STORE);
-    
-    return new Promise((resolve) => {
-      const request = store.get(url);
-      request.onsuccess = () => {
-        if (request.result && request.result.blob) {
-          resolve(request.result.blob);
-        } else {
-          // Subdomain fallback search if exact match missed
-          const match = url.match(/\/\/([a-d])\./i);
-          if (match) {
-            const currentSub = match[1].toLowerCase();
-            const altSubs = ['a', 'b', 'c', 'd'].filter((s) => s !== currentSub);
-            let found = false;
-            let checksLeft = altSubs.length;
-
-            for (const sub of altSubs) {
-              const altUrl = url.replace(`//${match[1]}.`, `//${sub}.`);
-              const altReq = store.get(altUrl);
-              altReq.onsuccess = () => {
-                if (!found && altReq.result && altReq.result.blob) {
-                  found = true;
-                  resolve(altReq.result.blob);
-                } else {
-                  checksLeft--;
-                  if (checksLeft === 0 && !found) resolve(null);
-                }
-              };
-              altReq.onerror = () => {
-                checksLeft--;
-                if (checksLeft === 0 && !found) resolve(null);
-              };
-            }
-          } else {
-            resolve(null);
-          }
-        }
-      };
-      request.onerror = () => resolve(null);
+    const req = db.transaction(TILE_STORE, 'readonly').objectStore(TILE_STORE).get(tileKey(url));
+    return await new Promise((resolve) => {
+      req.onsuccess = () => resolve((req.result?.blob as Blob) ?? null);
+      req.onerror = () => resolve(null);
     });
-  } catch (e) {
+  } catch {
     return null;
   }
 }
 
-/**
- * Save offline region metadata
- */
-export async function saveOfflineRegion(region: OfflineRegion): Promise<void> {
-  const db = await openDB();
-  const tx = db.transaction(REGION_STORE, 'readwrite');
-  const store = tx.objectStore(REGION_STORE);
-  store.put(region);
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+export async function saveTileToCache(url: string, blob: Blob): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(TILE_STORE, 'readwrite');
+    tx.objectStore(TILE_STORE).put({ key: tileKey(url), blob, size: blob.size, t: Date.now() });
+    await done(tx);
+  } catch (e) {
+    console.warn('Kachel konnte nicht gespeichert werden', e);
+  }
 }
 
-/**
- * Get all saved offline regions
- */
 export async function getOfflineRegions(): Promise<OfflineRegion[]> {
   try {
     const db = await openDB();
-    const tx = db.transaction(REGION_STORE, 'readonly');
-    const store = tx.objectStore(REGION_STORE);
-    const request = store.getAll();
-    return new Promise((resolve) => {
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => resolve([]);
+    const req = db.transaction(REGION_STORE, 'readonly').objectStore(REGION_STORE).getAll();
+    const list = await new Promise<OfflineRegion[]>((resolve) => {
+      req.onsuccess = () => resolve(req.result ?? []);
+      req.onerror = () => resolve([]);
     });
-  } catch (e) {
+    return list.sort((a, b) => b.id.localeCompare(a.id));
+  } catch {
     return [];
   }
 }
 
-/**
- * Delete offline region and clear IndexedDB tiles
- */
-export async function deleteOfflineRegion(id: string): Promise<void> {
+async function saveRegion(region: OfflineRegion) {
   const db = await openDB();
   const tx = db.transaction(REGION_STORE, 'readwrite');
-  const store = tx.objectStore(REGION_STORE);
-  store.delete(id);
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  tx.objectStore(REGION_STORE).put(region);
+  await done(tx);
 }
 
-/**
- * Calculate total cached tiles count & approximate size
- */
-export async function getCacheStats(): Promise<{ count: number; sizeMb: number }> {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(TILE_STORE, 'readonly');
-    const store = tx.objectStore(TILE_STORE);
-    const request = store.getAll();
-    return new Promise((resolve) => {
-      request.onsuccess = () => {
-        const items = request.result || [];
-        let totalBytes = 0;
-        items.forEach((item) => {
-          if (item.blob) totalBytes += item.blob.size || 15000;
-        });
-        resolve({
-          count: items.length,
-          sizeMb: Math.round((totalBytes / (1024 * 1024)) * 10) / 10
-        });
-      };
-      request.onerror = () => resolve({ count: 0, sizeMb: 0 });
-    });
-  } catch (e) {
-    return { count: 0, sizeMb: 0 };
-  }
+export interface TileRequest {
+  url: string;
+  key: string;
 }
 
-/**
- * Clear all cached tiles
- */
-export async function clearAllTileCache(): Promise<void> {
-  const db = await openDB();
-  const tx = db.transaction([TILE_STORE, REGION_STORE], 'readwrite');
-  tx.objectStore(TILE_STORE).clear();
-  tx.objectStore(REGION_STORE).clear();
-  return new Promise((resolve) => {
-    tx.oncomplete = () => resolve();
-  });
-}
-
-/**
- * Helper to calculate tile X, Y coordinates for lat/lng and zoom
- */
-function lng2tile(lng: number, zoom: number): number {
-  return Math.floor(((lng + 180) / 360) * Math.pow(2, zoom));
-}
-
-function lat2tile(lat: number, zoom: number): number {
-  return Math.floor(
-    ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) *
-      Math.pow(2, zoom)
-  );
-}
-
-// Download N tiles concurrently (browsers allow 6 per domain; subdomains a/b/c triple that)
-const CONCURRENT_DOWNLOADS = 8;
-
-/**
- * Download a single tile with parallel fallbacks. Throws on AbortError.
- */
-async function downloadSingleTile(url: string, signal?: AbortSignal): Promise<Blob> {
-  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-
-  // Primary URL
-  try {
-    const res = await fetch(url, { mode: 'cors', cache: 'force-cache', signal });
-    if (res.ok) {
-      const blob = await res.blob();
-      if (blob.size > 200) return blob;
-    }
-  } catch (e) {
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  }
-
-  // Parallel fallbacks — take whichever responds first
-  const matchZXY = url.match(/\/(\d+)\/(\d+)\/(\d+)[^/]*$/);
-  if (matchZXY) {
-    const [, z, x, y] = matchZXY;
-    try {
-      const blob = await Promise.any([
-        fetch(`https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/${z}/${y}/${x}`, { mode: 'cors', signal })
-          .then((r) => (r.ok ? r.blob() : Promise.reject())),
-        fetch(`https://a.basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`, { mode: 'cors', signal })
-          .then((r) => (r.ok ? r.blob() : Promise.reject())),
-        fetch(`https://a.tile.openstreetmap.org/${z}/${x}/${y}.png`, { mode: 'cors', signal })
-          .then((r) => (r.ok ? r.blob() : Promise.reject())),
-      ]);
-      if (blob.size > 200) return blob;
-    } catch {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    }
-  }
-
-  // Last resort: offline placeholder tile
-  return (await createDummyOfflineTileBlob(url))!;
-}
-
-/**
- * Download tile region for given bounding box & zoom levels
- */
-export async function downloadTileRegion(
-  regionName: string,
+export function buildTileList(
+  layer: Pick<MapLayerConfig, 'url' | 'subdomains'>,
   centerLat: number,
   centerLng: number,
   radiusKm: number,
   minZoom: number,
   maxZoom: number,
-  tileTemplateUrl: string,
-  onProgress: (progress: number, downloadedCount: number, totalCount: number) => void,
-  signal?: AbortSignal
-): Promise<OfflineRegion> {
-  const latDelta = radiusKm / 111.0;
-  const lngDelta = radiusKm / (111.0 * Math.cos((centerLat * Math.PI) / 180));
-
-  const minLat = centerLat - latDelta;
-  const maxLat = centerLat + latDelta;
-  const minLng = centerLng - lngDelta;
-  const maxLng = centerLng + lngDelta;
-
-  const tileUrls: string[] = [];
-
+): TileRequest[] {
+  const latDelta = radiusKm / 111;
+  const lngDelta = radiusKm / (111 * Math.cos((centerLat * Math.PI) / 180));
+  const subs = layer.subdomains?.length ? layer.subdomains : ['a'];
+  const out: TileRequest[] = [];
   for (let z = minZoom; z <= maxZoom; z++) {
-    const xMin = lng2tile(minLng, z);
-    const xMax = lng2tile(maxLng, z);
-    const yMin = lat2tile(maxLat, z);
-    const yMax = lat2tile(minLat, z);
-
+    const xMin = lng2tile(centerLng - lngDelta, z);
+    const xMax = lng2tile(centerLng + lngDelta, z);
+    const yMin = lat2tile(centerLat + latDelta, z);
+    const yMax = lat2tile(centerLat - latDelta, z);
     for (let x = xMin; x <= xMax; x++) {
       for (let y = yMin; y <= yMax; y++) {
-        const subdomains = ['a', 'b', 'c'];
-        const sub = subdomains[(x + y) % subdomains.length];
-        const url = tileTemplateUrl
-          .replace('{s}', sub)
-          .replace('{z}', z.toString())
-          .replace('{x}', x.toString())
-          .replace('{y}', y.toString())
-          .replace('{r}', '');
-        tileUrls.push(url);
+        const url = layer.url
+          .replace('{s}', subs[(x + y) % subs.length])
+          .replace('{z}', String(z))
+          .replace('{x}', String(x))
+          .replace('{y}', String(y))
+          .replace('{r}', typeof window !== 'undefined' && window.devicePixelRatio > 1 ? '@2x' : '');
+        out.push({ url, key: tileKey(url) });
       }
     }
   }
+  return out;
+}
 
-  const totalCount = tileUrls.length;
-  let completed = 0;
-  let totalBytes = 0;
+export function estimateTileCount(centerLat: number, radiusKm: number, minZoom: number, maxZoom: number) {
+  return buildTileList({ url: '{z}/{x}/{y}' }, centerLat, 0, radiusKm, minZoom, maxZoom).length;
+}
 
-  const regionId = `reg-${Date.now()}`;
-  const initialRegion: OfflineRegion = {
-    id: regionId,
-    name: regionName,
+const CONCURRENCY = 6;
+
+export async function downloadTileRegion(opts: {
+  name: string;
+  layer: MapLayerConfig;
+  centerLat: number;
+  centerLng: number;
+  radiusKm: number;
+  minZoom: number;
+  maxZoom: number;
+  onProgress: (done: number, total: number, failed: number) => void;
+  signal?: AbortSignal;
+}): Promise<OfflineRegion> {
+  const { name, layer, centerLat, centerLng, radiusKm, minZoom, maxZoom, onProgress, signal } = opts;
+  const tiles = buildTileList(layer, centerLat, centerLng, radiusKm, minZoom, maxZoom);
+  const region: OfflineRegion = {
+    id: `reg-${Date.now()}`,
+    name,
+    layerId: layer.id,
+    layerName: layer.name,
+    urlTemplate: layer.url,
+    subdomains: layer.subdomains ?? [],
     centerLat,
     centerLng,
     radiusKm,
     minZoom,
     maxZoom,
-    tileCount: totalCount,
+    tileCount: tiles.length,
+    failedCount: 0,
     sizeMb: 0,
     downloadedAt: new Date().toLocaleDateString('de-DE'),
     status: 'downloading',
-    progress: 0
   };
+  await saveRegion(region);
 
-  await saveOfflineRegion(initialRegion);
-
-  // Worker-pool: keeps CONCURRENT_DOWNLOADS active at all times (much faster than fixed batches)
-  const queue = [...tileUrls];
+  let completed = 0;
+  let failed = 0;
+  let bytes = 0;
+  const queue = [...tiles];
 
   const worker = async () => {
-    while (queue.length > 0) {
-      if (signal?.aborted) return;
-      const url = queue.shift();
-      if (!url) return;
-
+    while (queue.length && !signal?.aborted) {
+      const tile = queue.shift()!;
       try {
-        const blob = await downloadSingleTile(url, signal);
+        const existing = await getTileFromCache(tile.url);
+        if (existing) {
+          bytes += existing.size;
+        } else {
+          const res = await fetch(tile.url, { mode: 'cors', signal });
+          if (!res.ok) throw new Error(String(res.status));
+          const blob = await res.blob();
+          await saveTileToCache(tile.url, blob);
+          bytes += blob.size;
+        }
+      } catch {
         if (signal?.aborted) return;
-        await saveTileToCache(url, blob);
-        totalBytes += blob.size;
-      } catch (e) {
-        if (signal?.aborted) return;
+        failed++;
       }
-
       completed++;
-      onProgress(Math.round((completed / totalCount) * 100), completed, totalCount);
+      onProgress(completed, tiles.length, failed);
     }
   };
 
-  await Promise.all(Array.from({ length: CONCURRENT_DOWNLOADS }, worker));
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
-  const aborted = signal?.aborted ?? false;
-  const completedRegion: OfflineRegion = {
-    ...initialRegion,
-    status: aborted ? 'downloading' : 'completed',
-    progress: aborted ? Math.round((completed / totalCount) * 100) : 100,
-    sizeMb: Math.round((totalBytes / (1024 * 1024)) * 10) / 10 || Math.round(totalCount * 0.018 * 10) / 10
+  const finished: OfflineRegion = {
+    ...region,
+    failedCount: failed + (tiles.length - completed),
+    sizeMb: Math.round((bytes / 1048576) * 10) / 10,
+    status: signal?.aborted || failed > 0 ? 'partial' : 'completed',
   };
-
-  await saveOfflineRegion(completedRegion);
-  return completedRegion;
+  await saveRegion(finished);
+  return finished;
 }
 
-/**
- * Creates a visual offline topo tile fallback blob if CORS prevents tile download in sandbox
- */
-async function createDummyOfflineTileBlob(tileUrl: string): Promise<Blob | null> {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
+/** Deletes a region and every tile that no other region still needs. */
+export async function deleteOfflineRegion(id: string): Promise<void> {
+  const regions = await getOfflineRegions();
+  const target = regions.find((r) => r.id === id);
+  const db = await openDB();
+  if (target) {
+    const keep = new Set<string>();
+    for (const r of regions) {
+      if (r.id === id) continue;
+      buildTileList({ url: r.urlTemplate, subdomains: r.subdomains }, r.centerLat, r.centerLng, r.radiusKm, r.minZoom, r.maxZoom).forEach((t) =>
+        keep.add(t.key),
+      );
+    }
+    const keys = buildTileList(
+      { url: target.urlTemplate, subdomains: target.subdomains },
+      target.centerLat,
+      target.centerLng,
+      target.radiusKm,
+      target.minZoom,
+      target.maxZoom,
+    )
+      .map((t) => t.key)
+      .filter((k) => !keep.has(k));
+    const tx = db.transaction(TILE_STORE, 'readwrite');
+    const store = tx.objectStore(TILE_STORE);
+    keys.forEach((k) => store.delete(k));
+    await done(tx);
+  }
+  const tx = db.transaction(REGION_STORE, 'readwrite');
+  tx.objectStore(REGION_STORE).delete(id);
+  await done(tx);
+}
 
-  // Draw topographic grid tile pattern
-  ctx.fillStyle = '#f1f5f9';
-  ctx.fillRect(0, 0, 256, 256);
+export async function getCacheStats(): Promise<{ count: number; usageMb: number | null; quotaMb: number | null }> {
+  let count = 0;
+  try {
+    const db = await openDB();
+    const req = db.transaction(TILE_STORE, 'readonly').objectStore(TILE_STORE).count();
+    count = await new Promise<number>((resolve) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(0);
+    });
+  } catch {
+    /* ignore */
+  }
+  let usageMb: number | null = null;
+  let quotaMb: number | null = null;
+  try {
+    const est = await navigator.storage?.estimate?.();
+    if (est?.usage !== undefined) usageMb = Math.round((est.usage / 1048576) * 10) / 10;
+    if (est?.quota !== undefined) quotaMb = Math.round(est.quota / 1048576);
+  } catch {
+    /* ignore */
+  }
+  return { count, usageMb, quotaMb };
+}
 
-  // Draw contour lines
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(128, 128, 80, 0, Math.PI * 2);
-  ctx.arc(128, 128, 50, 0, Math.PI * 2);
-  ctx.arc(128, 128, 20, 0, Math.PI * 2);
-  ctx.stroke();
+export async function clearAllTileCache(): Promise<void> {
+  const db = await openDB();
+  const tx = db.transaction([TILE_STORE, REGION_STORE], 'readwrite');
+  tx.objectStore(TILE_STORE).clear();
+  tx.objectStore(REGION_STORE).clear();
+  await done(tx);
+}
 
-  // Water / forest touch
-  ctx.fillStyle = '#16a34a15';
-  ctx.fillRect(10, 10, 80, 60);
-
-  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+/** Ask the browser to not evict our offline maps (Safari honours this for installed PWAs). */
+export async function requestPersistentStorage(): Promise<boolean> {
+  try {
+    if (await navigator.storage?.persisted?.()) return true;
+    return (await navigator.storage?.persist?.()) ?? false;
+  } catch {
+    return false;
+  }
 }

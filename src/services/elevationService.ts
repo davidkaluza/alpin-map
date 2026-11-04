@@ -1,55 +1,53 @@
-// Elevation Service using Open-Meteo Elevation API (High-precision 30m/90m DEM global terrain data)
+// Terrain elevation via Open-Meteo (Copernicus DEM, ~90 m). Free, no key, CORS enabled.
+const cache = new Map<string, number>();
+const API = 'https://api.open-meteo.com/v1/elevation';
 
-const elevationCache = new Map<string, number>();
+const key = (lat: number, lng: number) => `${lat.toFixed(4)},${lng.toFixed(4)}`;
 
-/**
- * Fetches terrain elevation (in meters above sea level) for a given lat/lng coordinate
- */
-export async function getElevationForCoords(lat: number, lng: number): Promise<number | null> {
-  const cacheKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
-  if (elevationCache.has(cacheKey)) {
-    return elevationCache.get(cacheKey)!;
-  }
-
+export async function getElevationForCoords(lat: number, lng: number, signal?: AbortSignal): Promise<number | null> {
+  const k = key(lat, lng);
+  if (cache.has(k)) return cache.get(k)!;
   try {
-    const url = `https://api.open-meteo.com/v1/elevation?latitude=${lat.toFixed(5)}&longitude=${lng.toFixed(5)}`;
-    const response = await fetch(url);
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    if (data && Array.isArray(data.elevation) && data.elevation.length > 0) {
-      const ele = Math.round(data.elevation[0]);
-      elevationCache.set(cacheKey, ele);
-      return ele;
-    }
-  } catch (err) {
-    console.warn('Elevation fetch failed:', err);
+    const res = await fetch(`${API}?latitude=${lat.toFixed(5)}&longitude=${lng.toFixed(5)}`, { signal });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const v = data?.elevation?.[0];
+    if (typeof v !== 'number' || Number.isNaN(v)) return null;
+    const ele = Math.round(v);
+    cache.set(k, ele);
+    return ele;
+  } catch {
+    return null;
   }
-
-  return null;
 }
 
-/**
- * Batch fetches elevations for an array of coordinates (up to 50 points at a time)
- */
+/** Batch lookup, chunked to the API limit of 100 points per request. */
 export async function getElevationsForBatch(coords: Array<{ lat: number; lng: number }>): Promise<Array<number | null>> {
-  if (coords.length === 0) return [];
-
-  const lats = coords.map((c) => c.lat.toFixed(5)).join(',');
-  const lngs = coords.map((c) => c.lng.toFixed(5)).join(',');
-
-  try {
-    const url = `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lngs}`;
-    const response = await fetch(url);
-    if (!response.ok) return coords.map(() => null);
-
-    const data = await response.json();
-    if (data && Array.isArray(data.elevation)) {
-      return data.elevation.map((e: number | null) => (e !== null ? Math.round(e) : null));
+  const out: Array<number | null> = new Array(coords.length).fill(null);
+  const missing: number[] = [];
+  coords.forEach((c, i) => {
+    const k = key(c.lat, c.lng);
+    if (cache.has(k)) out[i] = cache.get(k)!;
+    else missing.push(i);
+  });
+  for (let start = 0; start < missing.length; start += 100) {
+    const idx = missing.slice(start, start + 100);
+    const lats = idx.map((i) => coords[i].lat.toFixed(5)).join(',');
+    const lngs = idx.map((i) => coords[i].lng.toFixed(5)).join(',');
+    try {
+      const res = await fetch(`${API}?latitude=${lats}&longitude=${lngs}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      (data?.elevation as Array<number | null> | undefined)?.forEach((e, j) => {
+        if (typeof e === 'number' && !Number.isNaN(e)) {
+          const i = idx[j];
+          out[i] = Math.round(e);
+          cache.set(key(coords[i].lat, coords[i].lng), out[i]!);
+        }
+      });
+    } catch {
+      /* offline – leave nulls */
     }
-  } catch (err) {
-    console.warn('Batch elevation fetch failed:', err);
   }
-
-  return coords.map(() => null);
+  return out;
 }

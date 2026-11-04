@@ -1,4 +1,4 @@
-import { AlpinePOI, POIType } from '../types';
+import type { AlpinePOI, POIType } from '../types';
 
 // Embedded raw CSV string representation for instant synchronous client & server access without network dependencies
 export const RAW_TOSCANA_AND_ALPINE_CSV = `id,name,type,categoryLabel,lat,lng,ele,region,description,facilities,openingSeason,capacity,googleMapsUrl
@@ -116,14 +116,22 @@ export function parsePOICsv(csvContent: string): AlpinePOI[] {
 
 export const TOSCANA_AND_ALPINE_CSV_POIS: AlpinePOI[] = parsePOICsv(RAW_TOSCANA_AND_ALPINE_CSV);
 
+const normalize = (s: string) =>
+  s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\([^)]*\)/g, '')
+    .replace(/[^a-z0-9]/g, '');
+
 /**
- * Searches the CSV table for a POI matching the given query or name/coordinates
+ * Searches the bundled dataset for a POI with a matching name (elevation suffixes and accents ignored).
  */
-export function lookupPOIFromCSV(name: string, region?: string): AlpinePOI | undefined {
-  const cleanQuery = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-  
+export function lookupPOIFromCSV(name: string): AlpinePOI | undefined {
+  const q = normalize(name);
+  if (q.length < 4) return undefined;
   return TOSCANA_AND_ALPINE_CSV_POIS.find((poi) => {
-    const cleanPoiName = poi.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return cleanPoiName.includes(cleanQuery) || cleanQuery.includes(cleanPoiName);
+    const n = normalize(poi.name);
+    return n === q || (n.length >= 6 && q.length >= 6 && (n.includes(q) || q.includes(n)));
   });
 }

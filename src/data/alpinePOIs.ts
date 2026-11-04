@@ -1,4 +1,4 @@
-import { AlpinePOI } from '../types';
+import type { AlpinePOI } from '../types';
 import { TOSCANA_AND_ALPINE_CSV_POIS } from './poiCsvLoader';
 
 export const STATIC_ALPINE_POIS: AlpinePOI[] = [
