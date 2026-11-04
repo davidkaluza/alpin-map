@@ -1,141 +1,94 @@
-import { AlpinePOI } from '../types';
+import type { AlpinePOI } from '../types';
 
-interface OverpassNode {
-  type: 'node';
+const ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const cache = new Map<string, AlpinePOI[]>();
+
+interface OverpassElement {
+  type: 'node' | 'way' | 'relation';
   id: number;
-  lat: number;
-  lon: number;
-  tags?: {
-    name?: string;
-    ele?: string;
-    natural?: string;
-    tourism?: string;
-    description?: string;
-    mountain_pass?: string;
-    wikipedia?: string;
-    prominence?: string;
-  };
+  lat?: number;
+  lon?: number;
+  center?: { lat: number; lon: number };
+  tags?: Record<string, string>;
 }
 
-// In-memory cache for fetched Overpass peak nodes by bounding box key
-const overpassCache = new Map<string, AlpinePOI[]>();
-
-/**
- * Quantize coordinates to ~0.05 degree grid key for caching
- */
-function getBBoxCacheKey(s: number, w: number, n: number, e: number, zoom: number): string {
+function bboxKey(s: number, w: number, n: number, e: number, zoom: number) {
   const step = zoom >= 12 ? 0.05 : 0.2;
-  const qS = (Math.floor(s / step) * step).toFixed(2);
-  const qW = (Math.floor(w / step) * step).toFixed(2);
-  const qN = (Math.ceil(n / step) * step).toFixed(2);
-  const qE = (Math.ceil(e / step) * step).toFixed(2);
-  return `${qS},${qW},${qN},${qE}-z${zoom >= 12 ? 'high' : 'mid'}`;
+  const q = (v: number, f: (x: number) => number) => (f(v / step) * step).toFixed(2);
+  return `${q(s, Math.floor)},${q(w, Math.floor)},${q(n, Math.ceil)},${q(e, Math.ceil)}|${zoom >= 12 ? 'h' : 'm'}`;
 }
 
-/**
- * Fetch peaks & alpine huts dynamically for a given map bounding box and zoom level via OpenStreetMap Overpass API
- */
-export async function fetchLiveOverpassPeaks(
+/** Live peaks, huts and shelters from OpenStreetMap for the visible map area. */
+export async function fetchOverpassPOIs(
   south: number,
   west: number,
   north: number,
   east: number,
-  zoom: number
-): Promise<{ pois: AlpinePOI[]; totalCount: number }> {
-  // At very zoomed out levels (< 8), don't query overpass to prevent huge payload
-  if (zoom < 8) {
-    return { pois: [], totalCount: 0 };
-  }
+  zoom: number,
+  signal?: AbortSignal,
+): Promise<AlpinePOI[]> {
+  if (zoom < 9) return [];
+  const k = bboxKey(south, west, north, east, zoom);
+  if (cache.has(k)) return cache.get(k)!;
 
-  const cacheKey = getBBoxCacheKey(south, west, north, east, zoom);
-  if (overpassCache.has(cacheKey)) {
-    const cached = overpassCache.get(cacheKey)!;
-    return { pois: cached, totalCount: cached.length };
-  }
+  const bbox = `${south.toFixed(4)},${west.toFixed(4)},${north.toFixed(4)},${east.toFixed(4)}`;
+  const peakFilter = zoom < 12 ? '["name"]' : '';
+  const query = `[out:json][timeout:15];(node["natural"="peak"]${peakFilter}(${bbox});nwr["tourism"~"^(alpine_hut|wilderness_hut)$"](${bbox});nwr["amenity"="shelter"]["shelter_type"~"basic_hut|lean_to"](${bbox}););out center 250;`;
 
-  // Construct Overpass QL query
-  // For zoom 8-10, filter for peaks with elevation >= 800m to keep query fast and high quality
-  // For zoom >= 11, get all peaks and huts in bbox
-  let eleFilter = '';
-  if (zoom < 11) {
-    eleFilter = '[~"^ele$"~"^(1[0-9]{3}|2[0-9]{3}|3[0-9]{3}|4[0-9]{3}|[8-9][0-9]{2})$"]';
-  }
-
-  const query = `
-    [out:json][timeout:15];
-    (
-      node["natural"="peak"]${eleFilter}(${south.toFixed(4)},${west.toFixed(4)},${north.toFixed(4)},${east.toFixed(4)});
-      node["tourism"~"alpine_hut|wilderness_hut"](${south.toFixed(4)},${west.toFixed(4)},${north.toFixed(4)},${east.toFixed(4)});
-    );
-    out body 250;
-  `;
-
-  const endpoints = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.ai/api/interpreter',
-    'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
-  ];
-
-  let rawElements: OverpassNode[] = [];
-
-  for (const endpoint of endpoints) {
+  let elements: OverpassElement[] | null = null;
+  for (const endpoint of ENDPOINTS) {
     try {
-      const response = await fetch(endpoint, {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-        body: 'data=' + encodeURIComponent(query)
+        body: 'data=' + encodeURIComponent(query),
+        signal,
       });
-
-      if (response.ok) {
-        const json = await response.json();
-        if (json && Array.isArray(json.elements)) {
-          rawElements = json.elements;
-          break;
-        }
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (Array.isArray(json?.elements)) {
+        elements = json.elements;
+        break;
       }
     } catch (e) {
-      console.warn(`Overpass endpoint ${endpoint} failed, trying next...`, e);
+      if (signal?.aborted) throw e;
     }
   }
+  if (!elements) return [];
 
   const pois: AlpinePOI[] = [];
-
-  rawElements.forEach((node) => {
-    if (!node.lat || !node.lon) return;
-
-    const tags = node.tags || {};
-    const isHut = tags.tourism === 'alpine_hut' || tags.tourism === 'wilderness_hut';
+  for (const el of elements) {
+    const lat = el.lat ?? el.center?.lat;
+    const lng = el.lon ?? el.center?.lon;
+    if (lat === undefined || lng === undefined) continue;
+    const tags = el.tags ?? {};
     const isPeak = tags.natural === 'peak';
-
-    // Skip unnamed minor peaks at lower zoom levels to avoid clutter
-    if (!tags.name && zoom < 13) return;
-
-    const eleNumber = tags.ele ? parseInt(tags.ele.replace(/[^0-9]/g, ''), 10) : 0;
-    const nameStr = tags.name || (isPeak ? 'Berggipfel' : 'Schutzhütte');
-    const formattedName = eleNumber > 0 ? `${nameStr} (${eleNumber}m)` : nameStr;
-
-    let regionName = 'Toskana & Alpenraum';
-    if (node.lat >= 42.5 && node.lat <= 44.5 && node.lon >= 9.8 && node.lon <= 12.5) {
-      regionName = 'Toskana / Appennino';
-    }
-
-    const poi: AlpinePOI = {
-      id: `overpass-${node.id}`,
-      name: formattedName,
-      type: isHut ? 'refugio' : 'peak',
-      categoryLabel: isHut ? 'Schutzhütte (OSM Live)' : 'Gipfel (OSM Live)',
-      lat: node.lat,
-      lng: node.lon,
-      ele: eleNumber,
-      region: regionName,
-      description: tags.description || `Live erfasser ${isPeak ? 'Berggipfel' : 'Zufluchtsort'} aus der OpenStreetMap-Datenbank.`,
-      facilities: ['OSM Live', isPeak ? 'Gipfelkarte' : 'Hütteneintrag'],
-      googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${node.lat},${node.lon}`
-    };
-
-    pois.push(poi);
-  });
-
-  overpassCache.set(cacheKey, pois);
-  return { pois, totalCount: pois.length };
+    if (!tags.name && (isPeak || zoom < 13)) continue;
+    const isShelter = tags.tourism === 'wilderness_hut' || tags.amenity === 'shelter';
+    const ele = tags.ele ? Math.round(parseFloat(tags.ele.replace(',', '.'))) || 0 : 0;
+    const name = tags.name || (isShelter ? 'Unterstand' : 'Schutzhütte');
+    pois.push({
+      id: `osm-${el.type}-${el.id}`,
+      name,
+      type: isPeak ? 'peak' : isShelter ? 'refugio' : 'hut',
+      categoryLabel: isPeak ? 'Gipfel' : isShelter ? 'Biwak / Unterstand' : 'Schutzhütte',
+      lat,
+      lng,
+      ele,
+      region: tags['addr:city'] || tags['is_in'] || 'OpenStreetMap',
+      description: tags.description || '',
+      openingSeason: tags.opening_hours,
+      capacity: tags.beds ? `${tags.beds} Schlafplätze` : tags.capacity ? `${tags.capacity} Plätze` : undefined,
+      website: tags.website || tags['contact:website'],
+      facilities: [
+        tags.operator && `Betreiber: ${tags.operator}`,
+        tags.drinking_water === 'yes' && 'Trinkwasser',
+        tags.fireplace === 'yes' && 'Feuerstelle',
+        tags.summit_cross === 'yes' || tags['summit:cross'] === 'yes' ? 'Gipfelkreuz' : null,
+      ].filter(Boolean) as string[],
+      googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
+    });
+  }
+  cache.set(k, pois);
+  return pois;
 }

@@ -5,70 +5,48 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Development
-npm run dev       # Start full-stack dev server (tsx server.ts, includes Vite HMR)
-npm run build     # Production build: Vite (frontend) + esbuild (server → dist/server.cjs)
-npm run start     # Run production build (node dist/server.cjs)
-npm run lint      # TypeScript type check only, no emit (tsc --noEmit)
-npm run clean     # Remove dist/ and server.js
+bun install        # dependencies (Bun, bun.lock)
+bun run dev        # Vite dev server (--host, reachable from iPhone in LAN)
+bun run build      # tsc --noEmit + vite build → dist/ (incl. service worker)
+bun run preview    # serve dist/
+bun run lint       # type check only
+bun run icons      # regenerate PWA icons + iOS splash screens (sharp)
 ```
 
-Package manager is **Bun** (bun.lock present) — use `bun install` for dependencies.
-
-## Environment Setup
-
-Copy `.env.example` to `.env` and set:
-- `GEMINI_API_KEY` — required for `/api/poi-details` AI endpoint
-- `VITE_MAPBOX_TOKEN` — optional, for Mapbox custom map styles
+Set `BASE_PATH=/alpin-map/` when building for GitHub Pages (the deploy workflow does this).
 
 ## Architecture
 
-**ALPIN MAP** is an offline-first PWA for Alpine hiking navigation. It runs as a React SPA backed by an Express server that proxies AI requests.
+**ALPIN MAP** is a purely static, offline-first PWA (React 19 + Vite + Leaflet + Tailwind v4 + motion). There is **no backend**: it is deployed to GitHub Pages via `.github/workflows/deploy.yml`. All third-party calls (tiles, Overpass, Open-Meteo, Gemini, Mapbox) go directly from the browser.
 
-### Request Flow
+API keys (Gemini, Mapbox) are entered by the user in the app (Mehr › API-Schlüssel) and stored in localStorage via `src/lib/settings.ts`. Never hard-code keys or read them from env.
 
-```
-Browser → Vite dev server (port proxied) → Express (server.ts)
-                                              └─ /api/poi-details → Google Gemini API
-```
+### Layout
 
-The Express server (`server.ts`) both serves the compiled frontend and exposes the Gemini-backed POI API. In production, `dist/server.cjs` handles everything.
-
-### State Management
-
-All significant app state lives in `src/App.tsx` — no external store (Redux/Zustand). Components receive state and callbacks as props. Key state slices:
-- Active tour / waypoints
-- Navigation mode (idle / simulating / recording)
-- Recorded GPS track
-- UI panel visibility
-
-### Offline Tile Caching
-
-`src/services/offlineStorage.ts` wraps IndexedDB for map tile storage. `src/components/MapContainer.tsx` extends Leaflet's `TileLayer` with a custom `OfflineCachedTileLayer` class that reads from IndexedDB before fetching from network.
-
-### Data Services
-
-| File | Purpose |
+| Path | Purpose |
 |------|---------|
-| `src/services/gpx.ts` | GPX file parsing (DOMParser) and generation |
-| `src/services/elevationService.ts` | Elevation data fetching for route profiles |
-| `src/services/overpassPoiService.ts` | Live OSM peak data via Overpass API |
-| `src/services/offlineStorage.ts` | IndexedDB tile cache read/write |
-| `src/data/poiCsvLoader.ts` | CSV fallback for POI descriptions when Gemini unavailable |
+| `src/App.tsx` | Root state (selected tour, layers, sheets, draw mode), wires everything |
+| `src/components/MapView.tsx` | Leaflet map (imperative handle), offline-cached tile layer, markers, route animation |
+| `src/components/ui/Sheet.tsx` | **The only modal surface** – bottom sheet on phones, centred panel ≥768px. All menus use it |
+| `src/components/ui/controls.tsx` | Shared UI kit: Button, Fab, SegmentedTabs, Toggle, Section/Row, Field, Chip, Stat, AnimatedNumber |
+| `src/components/panels/*` | Content of the main menu tabs (Touren, Navi, Orte, Offline, Mehr) |
+| `src/components/sheets/*` | Secondary sheets (Layers, Elevation, POI, SOS, Privacy, Install) |
+| `src/hooks/useNavigation.ts` | Navigation engine (GPS + simulation, recording) – lives in App so it keeps running when menus close |
+| `src/hooks/useGeolocation.ts`, `useCompass.ts`, `useWakeLock.ts` | Device sensors |
+| `src/services/offlineStorage.ts` | IndexedDB tile cache + region downloads (subdomain-independent keys) |
+| `src/services/poiDetails.ts` | Dataset lookup → Gemini REST (google_search grounding) |
+| `src/services/gpx.ts` | GPX parse/generate, export via Web Share |
+| `src/lib/storage.ts` | Reactive localStorage store (`useStored`) – all persisted user data |
+| `src/lib/geo.ts` | Distance, bearing, track stats, sun times, escapeHtml |
+| `src/data/*` | Map layer definitions, sample tours, bundled POIs |
 
-### Core Types
+### Conventions
 
-All shared TypeScript interfaces are in `src/types/index.ts`. Key types: `Coordinate`, `Tour`, `Waypoint` (with category union: `peak | hut | water | viewpoint | parking | danger | info`), `RecordedTrack`.
+- Dark UI (slate-950), accent emerald. Use the `glass` / `glass-strong` utilities and the UI kit instead of ad-hoc styles so menus stay uniform.
+- Respect safe areas (`--safe-top`, `--safe-bottom`, `--dock-h` in `index.css`); inputs must be ≥16px (iOS zoom).
+- Escape any user/OSM/GPX text that goes into Leaflet HTML (`escapeHtml`).
+- German UI copy.
 
-### Styling Conventions
+## iOS / App Store
 
-Tailwind CSS v4. Dark-mode-first (slate-950 backgrounds). Primary accent: emerald `#10b981`. Glass morphism via `backdrop-blur` + semi-transparent backgrounds. Safe-area insets applied for iOS notch support.
-
-## Build Output
-
-- `dist/` — frontend assets (Vite)
-- `dist/server.cjs` — bundled Express server (esbuild CommonJS)
-
-## iOS / App Store Notes
-
-See `APP_STORE_CHECKLIST.md` for Capacitor setup and App Store submission requirements. The `PrivacyLegalModal` component handles GDPR data export/deletion required for App Store compliance (Section 5.1.1).
+See `APP_STORE_CHECKLIST.md` for Capacitor packaging notes.

@@ -1,200 +1,140 @@
-import { Tour, Coordinate, Waypoint } from '../types';
+import type { Coordinate, Tour, Waypoint, WaypointCategory } from '../types';
+import { computeTrackStats, escapeHtml, estimateHours, uid } from '../lib/geo';
 
-/**
- * Generate GPX 1.1 XML string from a Tour object
- */
-export function generateGPX(tour?: Tour | null): string {
-  if (!tour) return '';
-  const timestamp = new Date().toISOString();
-  
-  const waypointsXml = (tour.waypoints || []).map(wp => `
-    <wpt lat="${wp.lat.toFixed(6)}" lon="${wp.lng.toFixed(6)}">
-      ${wp.ele !== undefined ? `<ele>${wp.ele.toFixed(1)}</ele>` : ''}
-      <name>${escapeXml(wp.name)}</name>
-      ${wp.description ? `<desc>${escapeXml(wp.description)}</desc>` : ''}
-      <sym>${mapCategoryToGpxSymbol(wp.category)}</sym>
-    </wpt>`).join('');
+const SYMBOLS: Record<WaypointCategory, string> = {
+  peak: 'Summit',
+  hut: 'Lodge',
+  water: 'Drinking Water',
+  viewpoint: 'Scenic Area',
+  parking: 'Parking Area',
+  danger: 'Danger Area',
+  info: 'Flag, Blue',
+};
 
-  const trkptsXml = (tour.coordinates || []).map(pt => `
-        <trkpt lat="${pt.lat.toFixed(6)}" lon="${pt.lng.toFixed(6)}">
-          ${pt.ele !== undefined ? `<ele>${pt.ele.toFixed(1)}</ele>` : ''}
-          ${pt.time ? `<time>${pt.time}</time>` : ''}
-        </trkpt>`).join('');
+function categoryFromSymbol(sym?: string | null): WaypointCategory {
+  const s = (sym || '').toLowerCase();
+  if (s.includes('summit') || s.includes('peak')) return 'peak';
+  if (s.includes('lodge') || s.includes('hut') || s.includes('building') || s.includes('restaurant')) return 'hut';
+  if (s.includes('water')) return 'water';
+  if (s.includes('scenic') || s.includes('view')) return 'viewpoint';
+  if (s.includes('parking')) return 'parking';
+  if (s.includes('danger') || s.includes('skull')) return 'danger';
+  return 'info';
+}
 
+export function generateGPX(tour: Tour): string {
+  const wpts = tour.waypoints
+    .map(
+      (wp) => `  <wpt lat="${wp.lat.toFixed(6)}" lon="${wp.lng.toFixed(6)}">
+${wp.ele !== undefined ? `    <ele>${wp.ele.toFixed(1)}</ele>\n` : ''}    <name>${escapeHtml(wp.name)}</name>
+${wp.description ? `    <desc>${escapeHtml(wp.description)}</desc>\n` : ''}    <sym>${SYMBOLS[wp.category]}</sym>
+  </wpt>`,
+    )
+    .join('\n');
+  const trkpts = tour.coordinates
+    .map(
+      (p) =>
+        `      <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lng.toFixed(6)}">${p.ele !== undefined ? `<ele>${p.ele.toFixed(1)}</ele>` : ''}${p.time ? `<time>${p.time}</time>` : ''}</trkpt>`,
+    )
+    .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="TrailNav Offline App - https://ai.studio" 
-  xmlns="http://www.topografix.com/GPX/1/1" 
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
-  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+<gpx version="1.1" creator="ALPIN MAP" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
   <metadata>
-    <name>${escapeXml(tour.title)}</name>
-    <desc>${escapeXml(tour.description || '')}</desc>
-    <author>
-      <name>TrailNav Offline User</name>
-    </author>
-    <time>${timestamp}</time>
+    <name>${escapeHtml(tour.title)}</name>
+    <desc>${escapeHtml(tour.description)}</desc>
+    <time>${new Date().toISOString()}</time>
   </metadata>
-  ${waypointsXml}
+${wpts}
   <trk>
-    <name>${escapeXml(tour.title)}</name>
-    <type>Hiking</type>
+    <name>${escapeHtml(tour.title)}</name>
+    <type>hiking</type>
     <trkseg>
-      ${trkptsXml}
+${trkpts}
     </trkseg>
   </trk>
-</gpx>`;
+</gpx>
+`;
 }
 
-/**
- * Trigger file download for GPX file in browser
- */
-export function downloadGPX(tour?: Tour | null) {
-  if (!tour) return;
-  const gpxContent = generateGPX(tour);
-  const blob = new Blob([gpxContent], { type: 'application/gpx+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const safeFilename = (tour.title || 'tour').toLowerCase().replace(/[^a-z0-9]/g, '_') + '.gpx';
-  
+/** Saves the GPX – uses the iOS share sheet when available, otherwise a download. */
+export async function exportGPX(tour: Tour): Promise<void> {
+  const xml = generateGPX(tour);
+  const filename = `${(tour.title || 'tour').replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_|_$/g, '').slice(0, 60) || 'tour'}.gpx`;
+  const file = new File([xml], filename, { type: 'application/gpx+xml' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: tour.title });
+      return;
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
+    }
+  }
+  const url = URL.createObjectURL(file);
   const a = document.createElement('a');
   a.href = url;
-  a.download = safeFilename;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/**
- * Parse an imported .gpx file string into a Tour structure
- */
 export function parseGPX(xmlText: string, fileName?: string): Tour {
-  const parser = new DOMParser();
-  const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-  
-  const titleElem = xmlDoc.querySelector('metadata > name') || xmlDoc.querySelector('trk > name') || xmlDoc.querySelector('rte > name');
-  const title = titleElem?.textContent?.trim() || fileName?.replace(/\.gpx$/i, '') || 'Importierte GPX Tour';
-  
-  const descElem = xmlDoc.querySelector('metadata > desc') || xmlDoc.querySelector('trk > desc');
-  const description = descElem?.textContent?.trim() || 'Über GPX-Datei importierte Outdoor-Route.';
-  
-  // Extract Waypoints
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('Ungültiges XML');
+  const text = (sel: string, root: ParentNode = doc) => root.querySelector(sel)?.textContent?.trim() || '';
+
+  const title = text('metadata > name') || text('trk > name') || text('rte > name') || fileName?.replace(/\.gpx$/i, '') || 'Importierte Tour';
+  const description = text('metadata > desc') || text('trk > desc') || 'Per GPX importierte Route.';
+
+  const num = (v: string | null | undefined) => {
+    const n = parseFloat(v ?? '');
+    return Number.isFinite(n) ? n : undefined;
+  };
+
   const waypoints: Waypoint[] = [];
-  const wptNodes = xmlDoc.querySelectorAll('wpt');
-  wptNodes.forEach((node, idx) => {
-    const lat = parseFloat(node.getAttribute('lat') || '0');
-    const lng = parseFloat(node.getAttribute('lon') || node.getAttribute('lng') || '0');
-    const eleNode = node.querySelector('ele');
-    const nameNode = node.querySelector('name');
-    const descNode = node.querySelector('desc');
-    
+  doc.querySelectorAll('wpt').forEach((node, i) => {
+    const lat = num(node.getAttribute('lat'));
+    const lng = num(node.getAttribute('lon'));
+    if (lat === undefined || lng === undefined) return;
     waypoints.push({
-      id: `gpx-wp-${idx}-${Date.now()}`,
-      name: nameNode?.textContent?.trim() || `Wegpunkt ${idx + 1}`,
-      category: 'info',
+      id: uid('wp'),
+      name: text('name', node) || `Wegpunkt ${i + 1}`,
+      category: categoryFromSymbol(text('sym', node)),
       lat,
       lng,
-      ele: eleNode ? parseFloat(eleNode.textContent || '0') : undefined,
-      description: descNode?.textContent?.trim() || undefined
+      ele: num(text('ele', node)),
+      description: text('desc', node) || undefined,
     });
   });
 
-  // Extract Track / Route points
   const coordinates: Coordinate[] = [];
-  const trkptNodes = xmlDoc.querySelectorAll('trkpt, rtept');
-  
-  trkptNodes.forEach((node) => {
-    const lat = parseFloat(node.getAttribute('lat') || '0');
-    const lng = parseFloat(node.getAttribute('lon') || node.getAttribute('lng') || '0');
-    const eleNode = node.querySelector('ele');
-    const timeNode = node.querySelector('time');
-    
-    if (!isNaN(lat) && !isNaN(lng)) {
-      coordinates.push({
-        lat,
-        lng,
-        ele: eleNode ? parseFloat(eleNode.textContent || '0') : 0,
-        time: timeNode?.textContent?.trim() || undefined
-      });
-    }
+  const pts = doc.querySelectorAll('trkpt');
+  (pts.length ? pts : doc.querySelectorAll('rtept')).forEach((node) => {
+    const lat = num(node.getAttribute('lat'));
+    const lng = num(node.getAttribute('lon'));
+    if (lat === undefined || lng === undefined) return;
+    coordinates.push({ lat, lng, ele: num(text('ele', node)), time: text('time', node) || undefined });
   });
+  if (coordinates.length < 2 && waypoints.length === 0) throw new Error('Keine Track- oder Wegpunkte gefunden');
 
-  // Calculate distance, ascent, descent
-  let totalDistanceMeters = 0;
-  let ascentM = 0;
-  let descentM = 0;
-
-  for (let i = 1; i < coordinates.length; i++) {
-    const prev = coordinates[i - 1];
-    const curr = coordinates[i];
-    
-    const dist = haversineDistanceMeters(prev.lat, prev.lng, curr.lat, curr.lng);
-    totalDistanceMeters += dist;
-
-    if (prev.ele !== undefined && curr.ele !== undefined) {
-      const eleDiff = curr.ele - prev.ele;
-      if (eleDiff > 0.5) ascentM += eleDiff;
-      else if (eleDiff < -0.5) descentM += Math.abs(eleDiff);
-    }
-  }
-
-  const distanceKm = Math.round((totalDistanceMeters / 1000) * 10) / 10;
-  const estimatedHours = Math.round(((distanceKm / 4.0) + (ascentM / 400.0)) * 10) / 10;
-  
-  let difficulty: Tour['difficulty'] = 'Einfach';
-  if (ascentM > 800 || distanceKm > 18) difficulty = 'Schwer';
-  else if (ascentM > 400 || distanceKm > 10) difficulty = 'Mittel';
+  const stats = computeTrackStats(coordinates);
+  const difficulty: Tour['difficulty'] =
+    stats.ascentM > 1500 ? 'Alpin' : stats.ascentM > 800 || stats.distanceKm > 18 ? 'Schwer' : stats.ascentM > 400 || stats.distanceKm > 10 ? 'Mittel' : 'Einfach';
 
   return {
-    id: `custom-gpx-${Date.now()}`,
+    id: uid('gpx'),
     title,
     region: 'Importierte Route',
     difficulty,
-    distanceKm,
-    ascentM: Math.round(ascentM),
-    descentM: Math.round(descentM),
-    estimatedHours,
+    distanceKm: stats.distanceKm,
+    ascentM: stats.ascentM,
+    descentM: stats.descentM,
+    estimatedHours: estimateHours(stats.distanceKm, stats.ascentM, stats.descentM),
     description,
     coordinates,
     waypoints,
     isCustom: true,
-    createdAt: new Date().toLocaleDateString('de-DE')
+    createdAt: new Date().toLocaleDateString('de-DE'),
   };
-}
-
-// Utility functions
-function escapeXml(unsafe: string): string {
-  return unsafe.replace(/[<>&'"]/g, (c) => {
-    switch (c) {
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '&': return '&amp;';
-      case '\'': return '&apos;';
-      case '"': return '&quot;';
-      default: return c;
-    }
-  });
-}
-
-function mapCategoryToGpxSymbol(cat: Waypoint['category']): string {
-  switch (cat) {
-    case 'peak': return 'Summit';
-    case 'hut': return 'Building';
-    case 'water': return 'Water Source';
-    case 'viewpoint': return 'Scenic Area';
-    case 'parking': return 'Parking Area';
-    case 'danger': return 'Danger Area';
-    default: return 'Flag, Blue';
-  }
-}
-
-export function haversineDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000; // earth radius in meters
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
 }

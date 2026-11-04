@@ -1,132 +1,7 @@
-import { Tour, MapLayerConfig } from '../types';
+import type { Tour } from '../types';
+import { computeTrackStats, estimateHours } from '../lib/geo';
 
-const envToken = typeof import.meta !== 'undefined' && (import.meta as any).env ? (import.meta as any).env.VITE_MAPBOX_TOKEN : undefined;
-const MAPBOX_ACCESS_TOKEN = envToken || 'pk.eyJ1IjoibWFwYm94IiwiYSI6ImNpejY4NXVycTA2emYycXBndHRqcmZ3N3ifQ.rJcFIG214AriISLbB6B5aw';
-
-export const MAP_LAYERS: MapLayerConfig[] = [
-  {
-    id: 'mapbox-standard',
-    name: 'Mapbox Standard (Klassisch & Vektorklar)',
-    category: 'base',
-    url: `https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token=${MAPBOX_ACCESS_TOKEN}`,
-    subdomains: [],
-    attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a> &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 22,
-    maxNativeZoom: 19,
-    minZoom: 2,
-    description: 'Offizielle Mapbox Standard-Karte mit gestochen scharfem Vektordesign und klaren Straßen & Pfaden.'
-  },
-  {
-    id: 'mapbox-outdoors',
-    name: 'Mapbox Outdoors (Topografie & Höhenlinien)',
-    category: 'base',
-    url: `https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/tiles/256/{z}/{x}/{y}?access_token=${MAPBOX_ACCESS_TOKEN}`,
-    subdomains: [],
-    attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a> &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 22,
-    maxNativeZoom: 19,
-    minZoom: 2,
-    description: 'Spezialisierter Mapbox Outdoor-Stil mit Reliefschattierung, Höhenlinien und ausgewiesenen Wanderwegen.'
-  },
-  {
-    id: 'carto-voyager',
-    name: 'CartoDB Voyager (Blitzschneller Vektor-Stil)',
-    category: 'base',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-    subdomains: ['a', 'b', 'c', 'd'],
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    maxZoom: 20,
-    maxNativeZoom: 19,
-    minZoom: 2,
-    description: 'Moderne, superschnell geladene Vektor-Rasterkarte mit klaren Höhenwegen und Konturen.'
-  },
-  {
-    id: 'esri-topo',
-    name: 'Esri World Topo (HD Topografie & Geländehöhen)',
-    category: 'base',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
-    subdomains: [],
-    attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, IGN, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community',
-    maxZoom: 20,
-    maxNativeZoom: 18,
-    minZoom: 2,
-    description: 'Globales schnelles Esri-Toponetz mit präzisem Geländerelief und Berghütten.'
-  },
-  {
-    id: 'maperitive-topo',
-    name: 'Maperitive Hiking Topo (Alpine Vektor- & Wanderkarte)',
-    category: 'base',
-    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-    subdomains: ['a', 'b', 'c'],
-    attribution: '&copy; Maperitive / OpenTopoMap & OpenStreetMap contributors',
-    maxZoom: 19,
-    maxNativeZoom: 17,
-    minZoom: 3,
-    description: 'Spezialisierter Maperitive-Outdoorstil mit plastischer Schattierung, Höhenlinien, Hütten & SAC-Wanderwegen.'
-  },
-  {
-    id: 'opentopo',
-    name: 'OpenTopoMap (Klassische Höhenlinien)',
-    category: 'base',
-    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-    subdomains: ['a', 'b', 'c'],
-    attribution: 'Kartendaten: &copy; <a href="https://openstreetmap.org">OpenStreetMap</a>, SRTM | Darstellung: &copy; <a href="http://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
-    maxZoom: 18,
-    maxNativeZoom: 17,
-    minZoom: 3,
-    description: 'Traditionelles topografisches Relief mit detaillierten Höhenmetern.'
-  },
-  {
-    id: 'carto-positron',
-    name: 'CartoDB Positron (Hell & Kontrastreich)',
-    category: 'base',
-    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-    subdomains: ['a', 'b', 'c', 'd'],
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    maxZoom: 20,
-    maxNativeZoom: 19,
-    minZoom: 2,
-    description: 'Maximale Ladegeschwindigkeit und hoher Kontrast für Routen.'
-  },
-  {
-    id: 'cyclosm',
-    name: 'CyclOSM / Outdoor',
-    category: 'base',
-    url: 'https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
-    subdomains: ['a', 'b', 'c'],
-    attribution: '&copy; <a href="https://www.cyclosm.org">CyclOSM</a> & OpenStreetMap',
-    maxZoom: 19,
-    maxNativeZoom: 18,
-    minZoom: 3,
-    description: 'Hervorragende Lesbarkeit für Rad- & Wandertouren mit Oberflächenangaben.'
-  },
-  {
-    id: 'esri-sat',
-    name: 'Esri Luftbild (HD Satellit)',
-    category: 'base',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    subdomains: [],
-    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-    maxZoom: 20,
-    maxNativeZoom: 18,
-    minZoom: 3,
-    description: 'Echte HD-Satellitenaufnahmen zur optischen Erkundung des Terrains.'
-  },
-  {
-    id: 'waymarked-hiking',
-    name: 'Wanderwege-Overlay (Waymarked Trails)',
-    category: 'overlay',
-    url: 'https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png',
-    subdomains: ['a', 'b', 'c'],
-    attribution: '&copy; <a href="https://hiking.waymarkedtrails.org">Waymarked Trails</a>',
-    maxZoom: 19,
-    maxNativeZoom: 17,
-    minZoom: 3,
-    description: 'Farbige Hervorhebung markierter lokaler und Fernwanderwege.'
-  }
-];
-
-export const SAMPLE_TOURS: Tour[] = [
+const RAW_TOURS: Tour[] = [
   {
     id: 'eibsee-zugspitze',
     title: 'Eibsee-Rundweg & Zugspitz-Blick',
@@ -451,3 +326,9 @@ export const SAMPLE_TOURS: Tour[] = [
     ]
   }
 ];
+
+/** Distance, ascent and time are derived from the actual track points so all numbers are consistent. */
+export const SAMPLE_TOURS: Tour[] = RAW_TOURS.map((t) => {
+  const s = computeTrackStats(t.coordinates);
+  return { ...t, distanceKm: s.distanceKm, ascentM: s.ascentM, descentM: s.descentM, estimatedHours: estimateHours(s.distanceKm, s.ascentM, s.descentM) };
+});
