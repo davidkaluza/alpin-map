@@ -341,7 +341,7 @@ function AlpinMap() {
             online={online}
             offlineMode={offlineMode}
             onOfflineModeChange={setOfflineMode}
-            layers={baseLayers}
+            layers={baseLayers.filter((b) => b.kind !== 'vector')}
             activeLayerId={baseLayer.id}
             mapCenter={view.center}
             tour={selectedTour}

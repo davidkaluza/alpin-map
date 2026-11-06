@@ -20,7 +20,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   keepScreenAwake: true,
   haptics: true,
   autoFollow: true,
-  sharpTiles: true,
+  sharpTiles: false,
 };
 
 export function useSettings() {

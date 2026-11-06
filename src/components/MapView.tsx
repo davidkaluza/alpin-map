@@ -159,7 +159,8 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
   propsRef.current = props;
 
   const layers = useRef({
-    base: null as L.TileLayer | null,
+    base: null as L.Layer | null,
+    baseSeq: 0,
     overlay: null as L.TileLayer | null,
     tour: L.layerGroup(),
     recorded: L.layerGroup(),
@@ -238,7 +239,25 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     const l = layers.current;
     const { baseLayer, offlineOnly, sharpTiles } = props;
     l.base?.remove();
-    l.base = new OfflineCachedTileLayer(baseLayer.url, {
+    l.base = null;
+    const seq = ++l.baseSeq;
+    map.setMinZoom(baseLayer.minZoom);
+    map.setMaxZoom(baseLayer.maxZoom);
+    containerRef.current?.classList.toggle('am-dark-map', !!baseLayer.dark);
+
+    if (baseLayer.kind === 'vector') {
+      import('../services/vectorTopo')
+        .then(({ createVectorLayer }) => createVectorLayer(map, baseLayer.url, baseLayer.attribution))
+        .then((layer) => {
+          if (seq !== l.baseSeq || mapRef.current !== map) return; // layer switched meanwhile
+          l.base = layer;
+          layer.addTo(map);
+        })
+        .catch((e) => console.warn('Vektorkarte konnte nicht geladen werden', e));
+      return;
+    }
+
+    const tiles = new OfflineCachedTileLayer(baseLayer.url, {
       attribution: baseLayer.attribution,
       maxZoom: baseLayer.maxZoom,
       ...tileZoomOptions(baseLayer, sharpTiles),
@@ -250,9 +269,9 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       offlineOnly,
       errorTileUrl: BLANK_TILE,
     });
-    l.base.addTo(map);
-    l.base.bringToBack();
-    containerRef.current?.classList.toggle('am-dark-map', !!baseLayer.dark);
+    tiles.addTo(map);
+    tiles.bringToBack();
+    l.base = tiles;
   }, [props.baseLayer, props.offlineOnly, props.sharpTiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

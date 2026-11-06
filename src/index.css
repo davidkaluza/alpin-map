@@ -126,8 +126,12 @@ button {
   color: #6ee7b7 !important;
 }
 .leaflet-bottom.leaflet-right {
-  bottom: var(--dock-h);
+  /* very bottom edge, below the floating dock (home-indicator area on iPhone) */
+  bottom: 0;
   right: var(--safe-right);
+}
+.leaflet-bottom.leaflet-right .leaflet-control-attribution {
+  margin: 0;
 }
 
 .leaflet-div-icon,

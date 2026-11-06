@@ -55,6 +55,8 @@ export interface MapLayerConfig {
   requiresToken?: boolean;
   /** Server delivers @2x tiles itself (via {r} or a fixed @2x URL) */
   hiDpi?: boolean;
+  /** 'vector': `url` is a MapLibre style URL (rendered with MapLibre GL, online only) */
+  kind?: 'raster' | 'vector';
 }
 
 export interface OfflineRegion {
