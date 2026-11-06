@@ -75,7 +75,7 @@ export function PrivacySheet({ open, onClose, customTours, places, onDataCleared
           <p>Die GPS-Position wird nur zur Anzeige, Navigation und Track-Aufzeichnung auf dem Gerät verwendet und nicht übertragen.</p>
           <h4 className="font-semibold text-white">Externe Dienste</h4>
           <p>
-            Beim Laden von Karten, Höhen und Gipfeldaten werden technisch bedingt IP-Adresse und der angefragte Kartenausschnitt an den jeweiligen Anbieter übermittelt: OpenTopoMap, CARTO, Esri, CyclOSM, Waymarked Trails, OpenStreetMap
+            Beim Laden von Karten, Höhen und Gipfeldaten werden technisch bedingt IP-Adresse und der angefragte Kartenausschnitt an den jeweiligen Anbieter übermittelt: OpenTopoMap, Esri, CyclOSM, Waymarked Trails, OpenStreetMap
             Overpass, Open-Meteo sowie – nur falls du einen Schlüssel hinterlegst – Mapbox und Google Gemini (dabei werden Name und Koordinaten des angetippten Ortes gesendet).
           </p>
           <h4 className="font-semibold text-white">Hosting</h4>

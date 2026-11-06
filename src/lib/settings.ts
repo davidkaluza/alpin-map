@@ -8,6 +8,8 @@ export interface AppSettings {
   keepScreenAwake: boolean;
   haptics: boolean;
   autoFollow: boolean;
+  /** Retina: load the next zoom level at half size for layers without @2x tiles */
+  sharpTiles: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -18,6 +20,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   keepScreenAwake: true,
   haptics: true,
   autoFollow: true,
+  sharpTiles: true,
 };
 
 export function useSettings() {

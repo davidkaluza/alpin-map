@@ -376,6 +376,7 @@ function AlpinMap() {
         baseLayer={baseLayer}
         showHikingOverlay={hikingOverlay}
         offlineOnly={offlineMode || !online}
+        sharpTiles={settings.sharpTiles}
         showPOIs={showPOIs}
         userPosition={showUser ? userPosition : null}
         userAccuracy={nav.mode === 'simulation' ? null : fix?.accuracy ?? null}

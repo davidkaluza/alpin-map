@@ -53,6 +53,8 @@ export interface MapLayerConfig {
   preview?: string;
   dark?: boolean;
   requiresToken?: boolean;
+  /** Server delivers @2x tiles itself (via {r} or a fixed @2x URL) */
+  hiDpi?: boolean;
 }
 
 export interface OfflineRegion {

@@ -53,6 +53,17 @@ const OfflineCachedTileLayer = L.TileLayer.extend({
   },
 }) as unknown as new (url: string, options: CachedLayerOptions) => L.TileLayer;
 
+/**
+ * Leaflet options for a layer's native zoom range. On retina screens with `sharp` on, layers
+ * without own @2x tiles get the next zoom level rendered at half size (like `detectRetina`,
+ * but keeping maxNativeZoom correct so we never request zooms the server doesn't have).
+ */
+function tileZoomOptions(layer: Pick<MapLayerConfig, 'maxZoom' | 'maxNativeZoom' | 'hiDpi'>, sharp: boolean): L.TileLayerOptions {
+  const maxNativeZoom = layer.maxNativeZoom ?? Math.min(layer.maxZoom, 18);
+  if (!sharp || layer.hiDpi || !L.Browser.retina) return { maxNativeZoom };
+  return { tileSize: 128, zoomOffset: 1, maxNativeZoom: maxNativeZoom - 1 };
+}
+
 function poiIcon(poi: AlpinePOI) {
   const isPeak = poi.type === 'peak';
   const color = isPeak ? '#f59e0b' : poi.type === 'refugio' ? '#fb923c' : '#10b981';
@@ -120,6 +131,7 @@ export interface MapViewProps {
   baseLayer: MapLayerConfig;
   showHikingOverlay: boolean;
   offlineOnly: boolean;
+  sharpTiles: boolean;
   showPOIs: boolean;
   userPosition: Coordinate | null;
   userAccuracy: number | null;
@@ -190,7 +202,8 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       zoomControl: false,
       attributionControl: true,
       preferCanvas: false,
-      zoomSnap: 0.5,
+      // whole zoom levels only – fractional zooms stretch raster tiles and make them blurry
+      zoomSnap: 1,
       wheelPxPerZoomLevel: 90,
       tapTolerance: 20,
       maxBoundsViscosity: 1,
@@ -223,12 +236,12 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     const map = mapRef.current;
     if (!map) return;
     const l = layers.current;
-    const { baseLayer, offlineOnly } = props;
+    const { baseLayer, offlineOnly, sharpTiles } = props;
     l.base?.remove();
     l.base = new OfflineCachedTileLayer(baseLayer.url, {
       attribution: baseLayer.attribution,
       maxZoom: baseLayer.maxZoom,
-      maxNativeZoom: baseLayer.maxNativeZoom ?? Math.min(baseLayer.maxZoom, 18),
+      ...tileZoomOptions(baseLayer, sharpTiles),
       minZoom: baseLayer.minZoom,
       subdomains: baseLayer.subdomains?.length ? baseLayer.subdomains : 'abc',
       keepBuffer: 4,
@@ -240,7 +253,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     l.base.addTo(map);
     l.base.bringToBack();
     containerRef.current?.classList.toggle('am-dark-map', !!baseLayer.dark);
-  }, [props.baseLayer, props.offlineOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [props.baseLayer, props.offlineOnly, props.sharpTiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const map = mapRef.current;
@@ -252,7 +265,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       l.overlay = new OfflineCachedTileLayer(HIKING_OVERLAY.url, {
         attribution: HIKING_OVERLAY.attribution,
         maxZoom: 20,
-        maxNativeZoom: HIKING_OVERLAY.maxNativeZoom,
+        ...tileZoomOptions(HIKING_OVERLAY, props.sharpTiles),
         opacity: 0.85,
         offlineOnly: props.offlineOnly,
         errorTileUrl: BLANK_TILE,
@@ -260,7 +273,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       });
       l.overlay.addTo(map);
     }
-  }, [props.showHikingOverlay, props.offlineOnly]);
+  }, [props.showHikingOverlay, props.offlineOnly, props.sharpTiles]);
 
   // Tour line with animated drawing
   useEffect(() => {

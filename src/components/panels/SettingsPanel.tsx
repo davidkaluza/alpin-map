@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
-import { Crosshair, Eye, EyeOff, KeyRound, Map as MapIcon, RefreshCw, Shield, Smartphone, Sparkles, SunMedium, Vibrate, Navigation2, ExternalLink, CheckCircle2, XCircle } from 'lucide-react';
+import { Crosshair, ScanEye, Eye, EyeOff, KeyRound, Map as MapIcon, RefreshCw, Shield, Smartphone, Sparkles, SunMedium, Vibrate, Navigation2, ExternalLink, CheckCircle2, XCircle } from 'lucide-react';
 import { useSettings } from '../../lib/settings';
 import { testGeminiKey } from '../../services/poiDetails';
 import { Button, Field, Row, Section, Toggle, inputClass } from '../ui/controls';
@@ -126,6 +126,7 @@ export function SettingsPanel({ onOpenInstall, onOpenPrivacy, onCheckUpdate, isS
 
       <Section title="Karte & Bedienung">
         <Row icon={<Crosshair className="h-[18px] w-[18px]" />} title="Fadenkreuz & Koordinaten" subtitle="Kartenmitte anzeigen" right={<Toggle checked={settings.showCenterHud} onChange={(v) => update({ showCenterHud: v })} label="Fadenkreuz" />} />
+        <Row icon={<ScanEye className="h-[18px] w-[18px]" />} title="Scharfe Karte" subtitle="Für Retina-Displays · feinere Schrift, mehr Daten" right={<Toggle checked={settings.sharpTiles} onChange={(v) => update({ sharpTiles: v })} label="Scharfe Karte" />} />
         <Row icon={<Navigation2 className="h-[18px] w-[18px]" />} title="Karte mitführen" subtitle="Beim Navigationsstart automatisch folgen" right={<Toggle checked={settings.autoFollow} onChange={(v) => update({ autoFollow: v })} label="Karte mitführen" />} />
         <Row icon={<SunMedium className="h-[18px] w-[18px]" />} title="Display wach halten" subtitle="Während der Navigation" right={<Toggle checked={settings.keepScreenAwake} onChange={(v) => update({ keepScreenAwake: v })} label="Display wach halten" />} />
         <Row icon={<Vibrate className="h-[18px] w-[18px]" />} title="Haptisches Feedback" subtitle="Wo vom Gerät unterstützt" right={<Toggle checked={settings.haptics} onChange={(v) => update({ haptics: v })} label="Haptik" />} />
