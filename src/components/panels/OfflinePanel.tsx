@@ -8,7 +8,7 @@ import {
   clearAllTileCache,
   deleteOfflineRegion,
   downloadTileRegion,
-  estimateTileCount,
+  estimateRegion,
   getCacheStats,
   getOfflineRegions,
   requestPersistentStorage,
@@ -54,8 +54,7 @@ export function OfflinePanel({ online, offlineMode, onOfflineModeChange, layers,
     return { ...mapCenter, fromTour: false };
   }, [tour, mapCenter]);
   const cfg = DETAIL[detail];
-  const estimate = estimateTileCount(center.lat, radius, cfg.min, Math.min(cfg.max, layer.maxNativeZoom ?? cfg.max));
-  const estimateMb = Math.round(estimate * 0.025 * 10) / 10;
+  const { tiles: estimate, mb: estimateMb } = estimateRegion(layer, center.lat, radius, cfg.min, Math.min(cfg.max, layer.maxNativeZoom ?? cfg.max));
 
   const refresh = async () => {
     setRegions(await getOfflineRegions());

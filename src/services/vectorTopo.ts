@@ -2,6 +2,10 @@
  * Vector topo base map: OpenFreeMap (OpenMapTiles schema) rendered with MapLibre GL inside Leaflet,
  * plus hillshade and contour lines generated client-side from Mapterhorn terrain tiles.
  * No API key required. Loaded lazily so MapLibre is only downloaded when this layer is used.
+ *
+ * Offline: every request (style, TileJSON, vector tiles, fonts, sprites, terrain) goes through the
+ * IndexedDB tile cache – via the `amc://` MapLibre protocol and a custom DEM fetcher – so viewed areas
+ * and downloaded regions work without network.
  */
 import L from 'leaflet';
 import * as maplibregl from 'maplibre-gl';
@@ -9,32 +13,71 @@ import type { LayerSpecification, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import '@maplibre/maplibre-gl-leaflet';
 import mlcontour from 'maplibre-contour';
+import { CACHE_PROTOCOL, DEM_MAXZOOM, DEM_URL } from '../data/vectorTopoConfig';
+import { getJsonNetworkFirst, getOrFetchTile } from './offlineStorage';
 // Let Vite bundle MapLibre's worker so it resolves in dev and in the production build
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
-const DEM_URL = 'https://tiles.mapterhorn.com/{z}/{x}/{y}.webp';
-const DEM_MAXZOOM = 12; // global coverage; higher zooms are overzoomed
 const FONT_REGULAR = ['Noto Sans Regular'];
 const FONT_BOLD = ['Noto Sans Bold'];
 export const VECTOR_PANE = 'vectorBase';
 
+/** "Nur Offline-Karten": never touch the network, only serve what is stored. */
+let offlineOnly = false;
+export function setVectorOfflineOnly(v: boolean) {
+  offlineOnly = v;
+}
+
+// `https://host/path` <-> `amc://host/path` (a nested "https://" would be mangled by MapLibre's sprite URL handling)
+const PREFIX = `${CACHE_PROTOCOL}://`;
+const cached = (url: string) => (url.startsWith(PREFIX) ? url : url.replace(/^https:\/\//, PREFIX));
+const original = (url: string) => url.replace(PREFIX, 'https://');
+
+maplibregl.addProtocol(CACHE_PROTOCOL, async (params, abort) => {
+  const blob = await getOrFetchTile(original(params.url), { signal: abort.signal, offlineOnly });
+  if (params.type === 'json') return { data: JSON.parse(await blob.text()) };
+  if (params.type === 'string') return { data: await blob.text() };
+  return { data: await blob.arrayBuffer() };
+});
+
 let demSource: InstanceType<typeof mlcontour.DemSource> | null = null;
 function getDemSource() {
   if (!demSource) {
-    demSource = new mlcontour.DemSource({ url: DEM_URL, encoding: 'terrarium', maxzoom: DEM_MAXZOOM, worker: true });
+    // worker: false so the DEM fetch can be routed through the IndexedDB cache below
+    demSource = new mlcontour.DemSource({ url: DEM_URL, encoding: 'terrarium', maxzoom: DEM_MAXZOOM, worker: false });
+    (demSource.manager as unknown as { getTile: (url: string, ac: AbortController) => Promise<{ data: Blob }> }).getTile = async (url, ac) => ({
+      data: await getOrFetchTile(url, { signal: ac.signal, offlineOnly }),
+    });
     demSource.setupMaplibre(maplibregl);
   }
   return demSource;
 }
 
+/** Routes all of the style's own resources through the cache protocol and inlines the TileJSON. */
+async function cacheStyleResources(style: StyleSpecification) {
+  if (style.glyphs) style.glyphs = cached(style.glyphs);
+  if (typeof style.sprite === 'string') style.sprite = cached(style.sprite);
+  else if (Array.isArray(style.sprite)) style.sprite = style.sprite.map((s) => ({ ...s, url: cached(s.url) }));
+  for (const src of Object.values(style.sources)) {
+    if (src.type !== 'vector' && src.type !== 'raster') continue;
+    if (src.url) {
+      const tj = await getJsonNetworkFirst<{ tiles: string[]; minzoom?: number; maxzoom?: number; bounds?: [number, number, number, number] }>(src.url, { offlineOnly });
+      delete src.url;
+      src.tiles = tj.tiles;
+      if (tj.minzoom !== undefined) src.minzoom = tj.minzoom;
+      if (tj.maxzoom !== undefined) src.maxzoom = tj.maxzoom;
+    }
+    if (src.tiles) src.tiles = src.tiles.map(cached);
+  }
+}
+
 const styleCache = new Map<string, Promise<StyleSpecification>>();
 
 async function buildStyle(styleUrl: string): Promise<StyleSpecification> {
-  const res = await fetch(styleUrl);
-  if (!res.ok) throw new Error(`Kartenstil konnte nicht geladen werden (${res.status})`);
-  const style = (await res.json()) as StyleSpecification;
+  const style = await getJsonNetworkFirst<StyleSpecification>(styleUrl, { offlineOnly });
+  await cacheStyleResources(style);
   const dem = getDemSource();
 
   style.sources.dem = {

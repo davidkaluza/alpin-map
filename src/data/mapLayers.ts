@@ -1,4 +1,5 @@
 import type { MapLayerConfig } from '../types';
+import { VECTOR_STYLE_URL } from './vectorTopoConfig';
 
 const OSM = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 
@@ -21,12 +22,12 @@ const BASE_LAYERS: MapLayerConfig[] = [
     name: 'Vektor-Topo',
     category: 'base',
     kind: 'vector',
-    url: 'https://tiles.openfreemap.org/styles/liberty',
+    url: VECTOR_STYLE_URL,
     attribution: `<a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/">OpenMapTiles</a> ${OSM}, <a href="https://mapterhorn.com/attribution">Mapterhorn</a>`,
     maxZoom: 20,
     minZoom: 2,
     hiDpi: true,
-    description: 'Immer gestochen scharf · Höhenlinien, Relief, Wege (nur online)',
+    description: 'Immer gestochen scharf · Höhenlinien, Relief, Wege',
     preview: 'from-amber-100 via-lime-100 to-emerald-200',
   },
   {

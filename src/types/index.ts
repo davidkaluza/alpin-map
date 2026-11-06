@@ -55,7 +55,7 @@ export interface MapLayerConfig {
   requiresToken?: boolean;
   /** Server delivers @2x tiles itself (via {r} or a fixed @2x URL) */
   hiDpi?: boolean;
-  /** 'vector': `url` is a MapLibre style URL (rendered with MapLibre GL, online only) */
+  /** 'vector': `url` is a MapLibre style URL (rendered with MapLibre GL) */
   kind?: 'raster' | 'vector';
 }
 
@@ -64,6 +64,8 @@ export interface OfflineRegion {
   name: string;
   layerId: string;
   layerName: string;
+  /** 'vector': urlTemplate is the vector-tile (.pbf) template; DEM tiles are derived from it */
+  kind?: 'raster' | 'vector';
   urlTemplate: string;
   subdomains: string[];
   centerLat: number;

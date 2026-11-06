@@ -1,5 +1,6 @@
 import type { MapLayerConfig, OfflineRegion } from '../types';
 import { lat2tile, lng2tile } from '../lib/geo';
+import { DEM_MAXZOOM, DEM_URL, FONTS, GLYPH_RANGES, VECTOR_MAXZOOM } from '../data/vectorTopoConfig';
 
 /**
  * IndexedDB tile cache.
@@ -38,11 +39,12 @@ function done(tx: IDBTransaction): Promise<void> {
   });
 }
 
-/** Removes subdomain and access tokens so the key is stable. */
+/** Removes subdomain, access tokens and OpenFreeMap data versions so the key is stable. */
 export function tileKey(url: string): string {
   return url
     .replace(/\/\/[a-d]\./i, '//')
-    .replace(/[?&]access_token=[^&]+/, '');
+    .replace(/[?&]access_token=[^&]+/, '')
+    .replace(/(tiles\.openfreemap\.org\/planet)\/[^/]+\/(\d+\/\d+\/\d+\.pbf)/, '$1/v/$2');
 }
 
 export async function getTileFromCache(url: string): Promise<Blob | null> {
@@ -67,6 +69,37 @@ export async function saveTileToCache(url: string, blob: Blob): Promise<void> {
   } catch (e) {
     console.warn('Kachel konnte nicht gespeichert werden', e);
   }
+}
+
+/** Cache-first fetch used by the vector map: serves from IndexedDB, otherwise downloads and stores. */
+export async function getOrFetchTile(url: string, opts: { signal?: AbortSignal; offlineOnly?: boolean } = {}): Promise<Blob> {
+  const cached = await getTileFromCache(url);
+  if (cached) return cached;
+  if (opts.offlineOnly || !navigator.onLine) throw new Error('offline – nicht gespeichert');
+  const res = await fetch(url, { mode: 'cors', signal: opts.signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  saveTileToCache(url, blob);
+  return blob;
+}
+
+/** Network-first JSON (style, TileJSON) so updates arrive when online; cached copy when offline. */
+export async function getJsonNetworkFirst<T>(url: string, opts: { offlineOnly?: boolean } = {}): Promise<T> {
+  if (!opts.offlineOnly && navigator.onLine) {
+    try {
+      const res = await fetch(url, { mode: 'cors' });
+      if (res.ok) {
+        const blob = await res.blob();
+        await saveTileToCache(url, blob);
+        return JSON.parse(await blob.text()) as T;
+      }
+    } catch {
+      /* fall back to cache */
+    }
+  }
+  const cached = await getTileFromCache(url);
+  if (!cached) throw new Error('Kartenstil nicht offline gespeichert');
+  return JSON.parse(await cached.text()) as T;
 }
 
 export async function getOfflineRegions(): Promise<OfflineRegion[]> {
@@ -127,6 +160,73 @@ export function buildTileList(
   return out;
 }
 
+function tileRange(centerLat: number, centerLng: number, radiusKm: number, z: number, margin = 0) {
+  const latDelta = radiusKm / 111;
+  const lngDelta = radiusKm / (111 * Math.cos((centerLat * Math.PI) / 180));
+  const max = 2 ** z - 1;
+  const clamp = (v: number) => Math.min(max, Math.max(0, v));
+  return {
+    xMin: clamp(lng2tile(centerLng - lngDelta, z) - margin),
+    xMax: clamp(lng2tile(centerLng + lngDelta, z) + margin),
+    yMin: clamp(lat2tile(centerLat + latDelta, z) - margin),
+    yMax: clamp(lat2tile(centerLat - latDelta, z) + margin),
+  };
+}
+
+function pushRange(out: TileRequest[], template: string, centerLat: number, centerLng: number, radiusKm: number, zMin: number, zMax: number, margin = 0) {
+  for (let z = Math.max(0, zMin); z <= zMax; z++) {
+    const r = tileRange(centerLat, centerLng, radiusKm, z, margin);
+    for (let x = r.xMin; x <= r.xMax; x++) {
+      for (let y = r.yMin; y <= r.yMax; y++) {
+        const url = template.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y));
+        out.push({ url, key: tileKey(url) });
+      }
+    }
+  }
+}
+
+/**
+ * Tiles the vector topo map needs for a region. Leaflet zoom Z shows MapLibre zoom Z-1 with 512px tiles,
+ * so vector + DEM tiles are one level below the Leaflet zoom range. DEM gets a 1-tile margin because
+ * contour lines are computed together with neighbouring tiles.
+ */
+export function buildVectorTileList(pbfTemplate: string, centerLat: number, centerLng: number, radiusKm: number, minZoom: number, maxZoom: number): TileRequest[] {
+  const out: TileRequest[] = [];
+  pushRange(out, pbfTemplate, centerLat, centerLng, radiusKm, minZoom - 1, Math.min(VECTOR_MAXZOOM, maxZoom - 1));
+  pushRange(out, DEM_URL, centerLat, centerLng, radiusKm, minZoom - 2, Math.min(DEM_MAXZOOM, maxZoom - 1), 1);
+  return out;
+}
+
+/** Style-level assets (fonts, sprites) – shared by all vector regions, never deleted per region. */
+export function vectorAssetUrls(style: { glyphs?: string; sprite?: unknown }): string[] {
+  const urls: string[] = [];
+  if (style.glyphs) {
+    for (const font of FONTS) for (const range of GLYPH_RANGES) urls.push(style.glyphs.replace('{fontstack}', encodeURIComponent(font)).replace('{range}', range));
+  }
+  const sprites = typeof style.sprite === 'string' ? [style.sprite] : Array.isArray(style.sprite) ? style.sprite.map((s: { url: string }) => s.url) : [];
+  for (const s of sprites) urls.push(`${s}.json`, `${s}.png`, `${s}@2x.json`, `${s}@2x.png`);
+  return urls;
+}
+
+/** Tile count + rough size for the download UI. */
+export function estimateRegion(layer: Pick<MapLayerConfig, 'kind'>, centerLat: number, radiusKm: number, minZoom: number, maxZoom: number) {
+  if (layer.kind === 'vector') {
+    const pbf: TileRequest[] = [];
+    pushRange(pbf, '{z}/{x}/{y}', centerLat, 0, radiusKm, minZoom - 1, Math.min(VECTOR_MAXZOOM, maxZoom - 1));
+    const dem: TileRequest[] = [];
+    pushRange(dem, '{z}/{x}/{y}', centerLat, 0, radiusKm, minZoom - 2, Math.min(DEM_MAXZOOM, maxZoom - 1), 1);
+    return { tiles: pbf.length + dem.length, mb: Math.round((pbf.length * 0.06 + dem.length * 0.11 + 1.5) * 10) / 10 };
+  }
+  const tiles = estimateTileCount(centerLat, radiusKm, minZoom, maxZoom);
+  return { tiles, mb: Math.round(tiles * 0.025 * 10) / 10 };
+}
+
+function regionTiles(r: Pick<OfflineRegion, 'kind' | 'urlTemplate' | 'subdomains' | 'centerLat' | 'centerLng' | 'radiusKm' | 'minZoom' | 'maxZoom'>) {
+  return r.kind === 'vector'
+    ? buildVectorTileList(r.urlTemplate, r.centerLat, r.centerLng, r.radiusKm, r.minZoom, r.maxZoom)
+    : buildTileList({ url: r.urlTemplate, subdomains: r.subdomains }, r.centerLat, r.centerLng, r.radiusKm, r.minZoom, r.maxZoom);
+}
+
 export function estimateTileCount(centerLat: number, radiusKm: number, minZoom: number, maxZoom: number) {
   return buildTileList({ url: '{z}/{x}/{y}' }, centerLat, 0, radiusKm, minZoom, maxZoom).length;
 }
@@ -145,13 +245,28 @@ export async function downloadTileRegion(opts: {
   signal?: AbortSignal;
 }): Promise<OfflineRegion> {
   const { name, layer, centerLat, centerLng, radiusKm, minZoom, maxZoom, onProgress, signal } = opts;
-  const tiles = buildTileList(layer, centerLat, centerLng, radiusKm, minZoom, maxZoom);
+  let tiles: TileRequest[];
+  let urlTemplate = layer.url;
+  if (layer.kind === 'vector') {
+    // style + TileJSON are refreshed and stored now, so the map can start completely offline
+    type Style = { glyphs?: string; sprite?: unknown; sources: Record<string, { url?: string }> };
+    const style = await getJsonNetworkFirst<Style>(layer.url);
+    const tjUrl = Object.values(style.sources).find((s) => s.url)?.url;
+    if (!tjUrl) throw new Error('Kartenstil ohne Vektorquelle');
+    const tj = await getJsonNetworkFirst<{ tiles: string[] }>(tjUrl);
+    urlTemplate = tj.tiles[0];
+    const assets = vectorAssetUrls(style).map((url) => ({ url, key: tileKey(url) }));
+    tiles = [...assets, ...buildVectorTileList(urlTemplate, centerLat, centerLng, radiusKm, minZoom, maxZoom)];
+  } else {
+    tiles = buildTileList(layer, centerLat, centerLng, radiusKm, minZoom, maxZoom);
+  }
   const region: OfflineRegion = {
     id: `reg-${Date.now()}`,
     name,
     layerId: layer.id,
     layerName: layer.name,
-    urlTemplate: layer.url,
+    kind: layer.kind ?? 'raster',
+    urlTemplate,
     subdomains: layer.subdomains ?? [],
     centerLat,
     centerLng,
@@ -215,18 +330,9 @@ export async function deleteOfflineRegion(id: string): Promise<void> {
     const keep = new Set<string>();
     for (const r of regions) {
       if (r.id === id) continue;
-      buildTileList({ url: r.urlTemplate, subdomains: r.subdomains }, r.centerLat, r.centerLng, r.radiusKm, r.minZoom, r.maxZoom).forEach((t) =>
-        keep.add(t.key),
-      );
+      regionTiles(r).forEach((t) => keep.add(t.key));
     }
-    const keys = buildTileList(
-      { url: target.urlTemplate, subdomains: target.subdomains },
-      target.centerLat,
-      target.centerLng,
-      target.radiusKm,
-      target.minZoom,
-      target.maxZoom,
-    )
+    const keys = regionTiles(target)
       .map((t) => t.key)
       .filter((k) => !keep.has(k));
     const tx = db.transaction(TILE_STORE, 'readwrite');

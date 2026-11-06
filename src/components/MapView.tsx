@@ -247,7 +247,10 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
     if (baseLayer.kind === 'vector') {
       import('../services/vectorTopo')
-        .then(({ createVectorLayer }) => createVectorLayer(map, baseLayer.url, baseLayer.attribution))
+        .then(({ createVectorLayer, setVectorOfflineOnly }) => {
+          setVectorOfflineOnly(offlineOnly);
+          return createVectorLayer(map, baseLayer.url, baseLayer.attribution);
+        })
         .then((layer) => {
           if (seq !== l.baseSeq || mapRef.current !== map) return; // layer switched meanwhile
           l.base = layer;
