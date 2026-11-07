@@ -1,5 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import L from 'leaflet';
+import L from '../lib/leafletGlobal';
+import 'leaflet.markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
 import type { AlpinePOI, Coordinate, MapLayerConfig, Tour, Waypoint } from '../types';
 import { ALPINE_POIS } from '../data/alpinePOIs';
 import { HIKING_OVERLAY } from '../data/mapLayers';
@@ -73,6 +75,21 @@ function poiIcon(poi: AlpinePOI) {
     html: `<div class="am-pop-in" style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:rgba(2,6,23,.82);border:2px solid ${color};box-shadow:0 4px 14px rgba(0,0,0,.45);backdrop-filter:blur(6px)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${svg}</svg></div>`,
     iconSize: [30, 30],
     iconAnchor: [15, 15],
+  });
+}
+
+/** Cluster bubble: count + ring in the colour of the dominant POI type. */
+function poiClusterIcon(cluster: L.MarkerCluster) {
+  const markers = cluster.getAllChildMarkers();
+  const count = markers.length;
+  const peaks = markers.filter((m) => (m.options as { poiType?: string }).poiType === 'peak').length;
+  const color = peaks >= count / 2 ? '#f59e0b' : '#10b981';
+  const size = count < 10 ? 34 : count < 50 ? 40 : 46;
+  return L.divIcon({
+    className: 'am-marker',
+    html: `<div class="am-pop-in" style="width:${size}px;height:${size}px;border-radius:50%;display:grid;place-items:center;background:rgba(2,6,23,.85);border:2.5px solid ${color};box-shadow:0 0 0 4px ${color}33,0 4px 14px rgba(0,0,0,.45);backdrop-filter:blur(6px);color:#f8fafc;font:700 ${count < 100 ? 13 : 12}px/1 -apple-system,system-ui,sans-serif">${count}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 }
 
@@ -164,7 +181,15 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     overlay: null as L.TileLayer | null,
     tour: L.layerGroup(),
     recorded: L.layerGroup(),
-    pois: L.layerGroup(),
+    pois: L.markerClusterGroup({
+      // group nearby POIs; split up while zooming in, all single from zoom 15
+      maxClusterRadius: (zoom: number) => (zoom < 12 ? 80 : 55),
+      disableClusteringAtZoom: 15,
+      showCoverageOnHover: false,
+      spiderfyOnMaxZoom: false,
+      chunkedLoading: true,
+      iconCreateFunction: poiClusterIcon,
+    }),
     userWps: L.layerGroup(),
     draw: L.layerGroup(),
     hover: null as L.CircleMarker | null,
@@ -201,6 +226,9 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       center: [lat, lng],
       zoom,
       zoomControl: false,
+      // initial bounds (needed by the marker cluster); the base layer effect sets the real range
+      minZoom: 2,
+      maxZoom: 20,
       attributionControl: true,
       preferCanvas: false,
       // whole zoom levels only – fractional zooms stretch raster tiles and make them blurry
@@ -439,22 +467,32 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     l.pois.clearLayers();
     if (!props.showPOIs) return;
 
-    const shown = new Map<string, L.Marker>();
-    const add = (poi: AlpinePOI) => {
-      for (const existing of shown.values()) {
-        const ll = existing.getLatLng();
-        if (distance({ lat: ll.lat, lng: ll.lng }, poi) < 250) return;
-      }
-      const m = L.marker([poi.lat, poi.lng], { icon: poiIcon(poi), zIndexOffset: 200, title: poi.name })
+    // skip duplicates (bundled + OSM) within 250 m, using a ~500 m grid instead of comparing all markers
+    const grid = new Map<string, AlpinePOI[]>();
+    const cell = (lat: number, lng: number) => `${Math.floor(lat / 0.005)}:${Math.floor(lng / 0.007)}`;
+    const isDuplicate = (poi: AlpinePOI) => {
+      const cy = Math.floor(poi.lat / 0.005);
+      const cx = Math.floor(poi.lng / 0.007);
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) for (const o of grid.get(`${cy + dy}:${cx + dx}`) ?? []) if (o.id === poi.id || distance(o, poi) < 250) return true;
+      return false;
+    };
+    const build = (poi: AlpinePOI) => {
+      if (isDuplicate(poi)) return null;
+      const k = cell(poi.lat, poi.lng);
+      grid.set(k, [...(grid.get(k) ?? []), poi]);
+      return L.marker([poi.lat, poi.lng], { icon: poiIcon(poi), zIndexOffset: 200, title: poi.name, poiType: poi.type } as L.MarkerOptions)
         .bindTooltip(
           `<div style="font-weight:600;font-size:12px">${escapeHtml(poi.name)}</div><div style="font-size:11px;color:${poi.type === 'peak' ? '#fbbf24' : '#34d399'}">${poi.ele ? `${poi.ele} m · ` : ''}${escapeHtml(poi.categoryLabel)}</div>`,
           { direction: 'top', offset: [0, -16], className: 'am-tooltip' },
         )
         .on('click', () => propsRef.current.onSelectPOI(poi));
-      m.addTo(l.pois);
-      shown.set(poi.id, m);
     };
-    ALPINE_POIS.forEach(add);
+    const addAll = (pois: AlpinePOI[]) => {
+      const batch = pois.map(build).filter((m): m is L.Marker => m !== null);
+      if (batch.length) l.pois.addLayers(batch);
+    };
+    addAll(ALPINE_POIS);
 
     let timer: number | undefined;
     let controller: AbortController | null = null;
@@ -467,7 +505,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         const b = map.getBounds();
         try {
           const live = await fetchOverpassPOIs(b.getSouth(), b.getWest(), b.getNorth(), b.getEast(), map.getZoom(), controller.signal);
-          live.forEach(add);
+          addAll(live);
         } catch {
           /* aborted / offline */
         }

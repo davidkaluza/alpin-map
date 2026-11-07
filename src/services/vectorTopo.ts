@@ -154,14 +154,18 @@ async function buildStyle(styleUrl: string): Promise<StyleSpecification> {
     minzoom: 10,
     filter: ['has', 'name'],
     layout: {
-      'text-field': ['case', ['has', 'ele'], ['concat', '▲ ', ['get', 'name'], '\n', ['to-string', ['get', 'ele']], ' m'], ['concat', '▲ ', ['get', 'name']]],
+      'text-field': ['case', ['has', 'ele'], ['concat', ['get', 'name'], '\n', ['to-string', ['get', 'ele']], ' m'], ['get', 'name']],
       'text-font': FONT_BOLD,
       'text-size': 11,
+      // triangle on the summit, name below it – clear of the app's 30px POI marker on the peak.
+      // Icon and text collide as one, so a hidden label never leaves a lone symbol behind.
+      'icon-image': 'triangle_11',
+      'icon-size': 0.8,
       'text-anchor': 'top',
-      'text-offset': [0, -0.4],
+      'text-offset': [0, 1.5],
       'symbol-sort-key': ['-', 0, ['coalesce', ['get', 'ele'], 0]],
     },
-    paint: { 'text-color': '#3f2a14', 'text-halo-color': 'rgba(255,255,255,0.9)', 'text-halo-width': 1.4 },
+    paint: { 'text-color': '#3f2a14', 'text-halo-color': 'rgba(255,255,255,0.9)', 'text-halo-width': 1.4, 'icon-opacity': 0.85 },
   };
 
   const layers = style.layers.filter((l) => l.id !== 'building-3d');
