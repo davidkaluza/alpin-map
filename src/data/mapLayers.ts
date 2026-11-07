@@ -5,19 +5,6 @@ const OSM = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreet
 
 const BASE_LAYERS: MapLayerConfig[] = [
   {
-    id: 'opentopo',
-    name: 'OpenTopoMap',
-    category: 'base',
-    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-    subdomains: ['a', 'b', 'c'],
-    attribution: `${OSM}, SRTM | &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)`,
-    maxZoom: 18,
-    maxNativeZoom: 17,
-    minZoom: 3,
-    description: 'Topografie mit Höhenlinien und Reliefschattierung',
-    preview: 'from-lime-200 via-amber-100 to-emerald-300',
-  },
-  {
     id: 'vector-topo',
     name: 'Vektor-Topo',
     category: 'base',
@@ -29,6 +16,19 @@ const BASE_LAYERS: MapLayerConfig[] = [
     hiDpi: true,
     description: 'Immer gestochen scharf · Höhenlinien, Relief, Wege',
     preview: 'from-amber-100 via-lime-100 to-emerald-200',
+  },
+  {
+    id: 'opentopo',
+    name: 'OpenTopoMap',
+    category: 'base',
+    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    subdomains: ['a', 'b', 'c'],
+    attribution: `${OSM}, SRTM | &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)`,
+    maxZoom: 18,
+    maxNativeZoom: 17,
+    minZoom: 3,
+    description: 'Topografie mit Höhenlinien und Reliefschattierung',
+    preview: 'from-lime-200 via-amber-100 to-emerald-300',
   },
   {
     id: 'esri-street',
@@ -122,7 +122,7 @@ export const HIKING_OVERLAY: MapLayerConfig = {
   description: 'Markierte Wanderwege farbig hervorgehoben',
 };
 
-export const DEFAULT_LAYER_ID = 'opentopo';
+export const DEFAULT_LAYER_ID = 'vector-topo';
 
 export function getBaseLayers(mapboxToken?: string): MapLayerConfig[] {
   const token = mapboxToken?.trim();
