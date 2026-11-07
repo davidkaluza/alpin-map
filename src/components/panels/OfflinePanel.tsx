@@ -14,6 +14,7 @@ import {
   requestPersistentStorage,
 } from '../../services/offlineStorage';
 import { formatCoord } from '../../lib/geo';
+import { getSacTile, sacTilesForRegion } from '../../services/sacTrailsService';
 
 interface Props {
   online: boolean;
@@ -85,8 +86,21 @@ export function OfflinePanel({ online, offlineMode, onOfflineModeChange, layers,
         signal: controller.signal,
         onProgress: (done, total, failed) => setProgress({ done, total, failed }),
       });
+      // SAC trail data for the same area (one Overpass request per ~10 km tile)
+      let sacFailed = 0;
+      if (!controller.signal.aborted) {
+        for (const [x, y] of sacTilesForRegion(center.lat, center.lng, radius)) {
+          try {
+            await getSacTile(x, y, { signal: controller.signal });
+          } catch {
+            if (controller.signal.aborted) break;
+            sacFailed++;
+          }
+        }
+      }
       if (controller.signal.aborted) toast('Download abgebrochen – bereits geladene Kacheln bleiben erhalten', 'info');
       else if (region.failedCount) toast(`${region.failedCount} Kacheln konnten nicht geladen werden`, 'error');
+      else if (sacFailed) toast(`„${region.name}“ ist offline verfügbar – Wegschwierigkeiten (SAC) konnten nicht geladen werden`, 'info');
       else toast(`„${region.name}“ ist offline verfügbar (${region.sizeMb} MB)`);
     } catch (e) {
       toast(`Download fehlgeschlagen: ${(e as Error).message}`, 'error');

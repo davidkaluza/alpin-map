@@ -82,6 +82,7 @@ function AlpinMap() {
   const [selectedTourId, setSelectedTourId] = useStored<string | null>('selectedTourId', null);
   const [baseLayerId, setBaseLayerId] = useStored('baseLayer', DEFAULT_LAYER_ID);
   const [hikingOverlay, setHikingOverlay] = useStored('hikingOverlay', true);
+  const [sacTrails, setSacTrails] = useStored('sacTrails', true);
   const [showPOIs, setShowPOIs] = useStored('showPOIs', true);
   const [offlineMode, setOfflineMode] = useStored('offlineMode', false);
   const [locationEnabled, setLocationEnabled] = useStored('locationEnabled', false);
@@ -275,6 +276,8 @@ function AlpinMap() {
     [isDrawMode],
   );
 
+  const onSacError = useCallback(() => toast('Wegdaten (OpenStreetMap) gerade nicht erreichbar – gespeicherte Bereiche bleiben sichtbar', 'error'), [toast]);
+
   const onViewChange = useCallback((center: Coordinate, zoom: number) => {
     setView({ center, zoom });
     writeStored('lastView', { lat: center.lat, lng: center.lng, zoom });
@@ -375,6 +378,7 @@ function AlpinMap() {
         tour={selectedTour}
         baseLayer={baseLayer}
         showHikingOverlay={hikingOverlay}
+        showSacTrails={sacTrails}
         offlineOnly={offlineMode || !online}
         sharpTiles={settings.sharpTiles}
         showPOIs={showPOIs}
@@ -394,6 +398,7 @@ function AlpinMap() {
         onViewChange={onViewChange}
         onUserPan={onUserPan}
         onSelectPOI={setSelectedPOI}
+        onSacError={onSacError}
       />
 
       {/* subtle vignette under status bar & dock for legibility */}
@@ -506,6 +511,8 @@ function AlpinMap() {
         onSelect={setBaseLayerId}
         hikingOverlay={hikingOverlay}
         onHikingOverlay={setHikingOverlay}
+        sacTrails={sacTrails}
+        onSacTrails={setSacTrails}
         showPOIs={showPOIs}
         onShowPOIs={setShowPOIs}
         hasMapboxToken={!!settings.mapboxToken}

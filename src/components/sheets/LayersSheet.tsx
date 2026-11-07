@@ -1,5 +1,6 @@
 import { motion } from 'motion/react';
-import { Check, Footprints, Layers, Mountain, KeyRound } from 'lucide-react';
+import { Check, Footprints, Layers, Mountain, KeyRound, TrendingUp } from 'lucide-react';
+import { SAC_GRADES, type SacGrade } from '../../services/sacTrailsService';
 import type { MapLayerConfig } from '../../types';
 import { Sheet } from '../ui/Sheet';
 import { Row, Section, Toggle } from '../ui/controls';
@@ -13,13 +14,15 @@ interface Props {
   onSelect: (id: string) => void;
   hikingOverlay: boolean;
   onHikingOverlay: (v: boolean) => void;
+  sacTrails: boolean;
+  onSacTrails: (v: boolean) => void;
   showPOIs: boolean;
   onShowPOIs: (v: boolean) => void;
   hasMapboxToken: boolean;
   onOpenSettings: () => void;
 }
 
-export function LayersSheet({ open, onClose, layers, activeId, onSelect, hikingOverlay, onHikingOverlay, showPOIs, onShowPOIs, hasMapboxToken, onOpenSettings }: Props) {
+export function LayersSheet({ open, onClose, layers, activeId, onSelect, hikingOverlay, onHikingOverlay, sacTrails, onSacTrails, showPOIs, onShowPOIs, hasMapboxToken, onOpenSettings }: Props) {
   return (
     <Sheet open={open} onClose={onClose} title="Kartenebenen" subtitle="Stil und Overlays wählen" icon={<Layers className="h-5 w-5" />} tone="sky">
       <div className="mb-5 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
@@ -61,6 +64,29 @@ export function LayersSheet({ open, onClose, layers, activeId, onSelect, hikingO
 
       <Section title="Overlays">
         <Row icon={<Footprints className="h-[18px] w-[18px]" />} iconBg="bg-rose-500/15 text-rose-300" title="Wanderwege" subtitle="Markierte Wege (Waymarked Trails)" right={<Toggle checked={hikingOverlay} onChange={onHikingOverlay} label="Wanderwege" />} />
+        <Row
+          icon={<TrendingUp className="h-[18px] w-[18px]" />}
+          iconBg="bg-sky-500/15 text-sky-300"
+          title="Schwierigkeit (SAC)"
+          subtitle="Wege nach T1–T6 eingefärbt · ab Zoom 13"
+          right={<Toggle checked={sacTrails} onChange={onSacTrails} label="Schwierigkeit SAC" />}
+        />
+        {sacTrails && (
+          <div className="flex flex-wrap gap-x-3 gap-y-1.5 px-4 pb-3 pt-1 text-[11.5px] text-slate-300">
+            {(Object.keys(SAC_GRADES) as unknown as SacGrade[]).map((k) => {
+              const g = SAC_GRADES[k];
+              return (
+                <span key={k} className="flex items-center gap-1.5" title={g.name}>
+                  <svg width="22" height="6" aria-hidden="true">
+                    <line x1="1" y1="3" x2="21" y2="3" stroke="#fff" strokeOpacity="0.7" strokeWidth="5" strokeLinecap="round" />
+                    <line x1="1" y1="3" x2="21" y2="3" stroke={g.color} strokeWidth="2.5" strokeDasharray={g.dash ? g.dash.split(' ').map((n) => Number(n) * 0.6).join(' ') : undefined} />
+                  </svg>
+                  {g.label}
+                </span>
+              );
+            })}
+          </div>
+        )}
         <Row icon={<Mountain className="h-[18px] w-[18px]" />} iconBg="bg-amber-500/15 text-amber-300" title="Gipfel & Hütten" subtitle="Inkl. Live-Daten aus OpenStreetMap" right={<Toggle checked={showPOIs} onChange={onShowPOIs} label="Gipfel und Hütten" />} />
       </Section>
 

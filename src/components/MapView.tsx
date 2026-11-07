@@ -7,6 +7,7 @@ import { ALPINE_POIS } from '../data/alpinePOIs';
 import { HIKING_OVERLAY } from '../data/mapLayers';
 import { getTileFromCache, saveTileToCache } from '../services/offlineStorage';
 import { fetchOverpassPOIs } from '../services/overpassPoiService';
+import { SAC_GRADES, SAC_MIN_ZOOM, VISIBILITY_LABELS, getSacTile, sacTilesFor, type SacTrail } from '../services/sacTrailsService';
 import { CATEGORIES } from '../lib/categories';
 import { distance, escapeHtml } from '../lib/geo';
 
@@ -147,6 +148,7 @@ export interface MapViewProps {
   tour: Tour | null;
   baseLayer: MapLayerConfig;
   showHikingOverlay: boolean;
+  showSacTrails: boolean;
   offlineOnly: boolean;
   sharpTiles: boolean;
   showPOIs: boolean;
@@ -167,6 +169,8 @@ export interface MapViewProps {
   onViewChange: (center: Coordinate, zoom: number) => void;
   onUserPan: () => void;
   onSelectPOI: (poi: AlpinePOI) => void;
+  /** Overpass unreachable while loading SAC trails */
+  onSacError?: () => void;
 }
 
 export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(props, ref) {
@@ -324,6 +328,73 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       l.overlay.addTo(map);
     }
   }, [props.showHikingOverlay, props.offlineOnly, props.sharpTiles]);
+
+  // SAC difficulty trails (OpenStreetMap via Overpass, cached per z12 tile)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !props.showSacTrails) return;
+    if (!map.getPane('sacPane')) map.createPane('sacPane').style.zIndex = '390'; // below tour lines (overlayPane 400)
+    const renderer = L.canvas({ pane: 'sacPane', tolerance: 10, padding: 0.3 });
+    const group = L.layerGroup().addTo(map);
+    const drawn = new Set<number>();
+    let controller: AbortController | null = null;
+    let timer: number | undefined;
+    let errorShown = false;
+
+    const draw = (trails: SacTrail[]) => {
+      for (const t of trails) {
+        if (drawn.has(t.id)) continue; // ways crossing tile borders come in several tiles
+        drawn.add(t.id);
+        const g = SAC_GRADES[t.grade];
+        // white casing (also the wide, tappable line) + coloured line on top
+        const casing = L.polyline(t.coords, { renderer, color: '#ffffff', weight: 6, opacity: 0.75, lineCap: 'round', bubblingMouseEvents: false });
+        const line = L.polyline(t.coords, { renderer, color: g.color, weight: 3, dashArray: g.dash, lineCap: g.dash ? 'butt' : 'round', interactive: false });
+        const title = t.name || (t.ref ? `Weg ${t.ref}` : 'Wanderweg');
+        casing.bindPopup(
+          popupHtml(title, [
+            `<span style="display:inline-block;min-width:26px;padding:1px 6px;border-radius:6px;background:${g.color};color:#020617;font-weight:700;text-align:center">${g.label}</span> ${escapeHtml(g.name)}`,
+            t.visibility ? escapeHtml(VISIBILITY_LABELS[t.visibility] ?? t.visibility) : '',
+            t.name && t.ref ? `Markierung ${escapeHtml(t.ref)}` : '',
+          ]),
+          { className: 'am-popup' },
+        );
+        group.addLayer(casing).addLayer(line);
+      }
+    };
+
+    const load = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(async () => {
+        const visible = map.getZoom() >= SAC_MIN_ZOOM;
+        if (map.getPane('sacPane')) map.getPane('sacPane')!.style.display = visible ? '' : 'none';
+        if (!visible) return;
+        controller?.abort();
+        controller = new AbortController();
+        const b = map.getBounds().pad(0.15);
+        // one tile at a time – gentle on the public Overpass servers
+        for (const [x, y] of sacTilesFor(b.getSouth(), b.getWest(), b.getNorth(), b.getEast())) {
+          try {
+            draw(await getSacTile(x, y, { signal: controller.signal, offlineOnly: propsRef.current.offlineOnly }));
+          } catch {
+            if (controller.signal.aborted) return;
+            if (!errorShown) {
+              errorShown = true;
+              propsRef.current.onSacError?.();
+            }
+          }
+        }
+      }, 500);
+    };
+    load();
+    map.on('moveend', load);
+    return () => {
+      window.clearTimeout(timer);
+      controller?.abort();
+      map.off('moveend', load);
+      group.remove();
+      renderer.remove();
+    };
+  }, [props.showSacTrails]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tour line with animated drawing
   useEffect(() => {
